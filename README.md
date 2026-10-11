@@ -6,7 +6,7 @@ Doom in the browser, in pure JavaScript — no framework, no build step, no serv
 
 Spipu-Doom (`index.html`) ships as a PWA and converts **any Doom-format WAD on the fly, entirely in the browser**: WAD files are stored in IndexedDB, parsed in JS (geometry, textures, doors, lifts, switches, monsters, weapons, sounds and music) and turned directly into in-memory engine objects — no server-side conversion, no generated files. Everything game-specific lives in **game profiles** (Doom, Freedoom, **Heretic**…) auto-detected from the WAD content, so other Doom-engine games plug in without touching the converter.
 
-It runs on **Spipu3D** (`js/engine/`), the 3D engine written for it: renderer, FPS physics, entities, inputs and audio, with no knowledge of Doom whatsoever. The demos in `_examples/` drive that same engine on other scenes.
+It runs on **Spipu3D** (`js/engine/`), the 3D engine written for it: renderer, FPS physics, entities, inputs and audio, with no knowledge of Doom whatsoever. The generic web-app layer (`js/webapp/`: bootstrap, storage, settings, translations, input devices, menu building blocks, network) is shared with the other Spipu PWAs. The demos in `_examples/` drive that same engine on other scenes.
 
 ## Play
 
@@ -136,7 +136,7 @@ website/
 ├── index.html                Spipu-Doom shell (PWA)
 ├── appServiceWorker.js       Service Worker — cache-first, offline (must stay at webroot: SW scope)
 ├── ping.json                 Install/update/start tracking json — hit only
-├── css/                      Shell + menu styles
+├── css/                      Shell + doom menu theme; webapp/: the structure of the generic menus
 ├── assets/uzdoom/            UZDoom impact-decal graphics + finale texts (GPL v3 — own LICENSE.md + README.md)
 ├── assets/spipu/             Our own graphics: the generic splash masks, colourised at level load
 ├── _examples/                Spipu3D demos, their assets and definitions, and libBootstrap.json (the engine files the demos load)
@@ -145,7 +145,9 @@ website/
 └── js/
     ├── libBootstrap.json     The game's bootstrap definition: version + every file it loads (engine, webapp, doom)
     ├── main.js               Entry point
-    ├── webapp/               Generic webapp layer — bootstrap/versioning, IndexedDB wrapper with versioned schema upgrades, translation catalog, content hash, wake lock
+    ├── webapp/               Generic webapp layer — bootstrap/versioning, IndexedDB wrapper with versioned schema upgrades, persistent settings, translation catalog, content hash, wake lock
+    │   ├── input/               Raw input devices: keyboard, mouse, gamepad with rebindable actions, virtual touch gamepad laid out by the page
+    │   ├── menu/                Building blocks of DOM menus: letterboxed display, list navigation (mouse, keyboard, gamepad), modals, settings pages, on-screen keyboard, their texts
     │   ├── net/                 Peer-to-peer network layer — WebRTC and loopback links, compact signals, pairing codes and flows, messages, ping, star sessions
     │   └── qr/                  QR code writing, camera scanning, camera probe and the pairing view (code shown, code read)
     ├── doom/                 The Spipu-Doom game
@@ -187,7 +189,7 @@ website/
     │   ├── monster/             Monster system: defs, 35 Hz driver, locomotion, senses, attacks, damage, boss deaths, the Icon of Sin, and the drawable body views with their renderer
     │   ├── automap/             Level map: line model, state, and the vanilla BSP reveal
     │   ├── hud/                 Game HUD + debug overlay + automap layer
-    │   ├── menu/                DOM menu screens and modals (WAD list, episodes, multiplayer, options, text entry, pause and its multiplayer sub-menu, death, save slots, pairing, lobby), and their keyboard / gamepad navigation
+    │   ├── menu/                DOM menu screens and modals of the game (WAD list, episodes, multiplayer, options and controls, pause and its multiplayer sub-menu, death, tally, save slots, pairing, lobby)
     │   ├── net/                 Multiplayer of the game: pairing payload, lobby, main and sub sessions, device availability, the replicated turn state and commands with their binary codecs, the host's turn cycle and the replica applier
     │   ├── weapon/              Weapon machinery: psprite machine, hitscan, projectiles, effects, decals, and the drawable weapon and projectile views with their renderers
     │   └── wad/                 WAD reading + IndexedDB storage, game profiles (profile/), on-the-fly converter (convert/)
@@ -196,7 +198,7 @@ website/
         ├── collision.js         FPS physics: spatially indexed triangles, box blockers, mover pressure
         ├── spatialGrid.js       Uniform XZ grid over a static triangle set
         ├── entity/              Object3d, Billboard, Instance (keyframes/triggers/cycles), User, UserCommand, World, external forces
-        ├── input/               Unified inputs: keyboard, mouse, gamepad, virtual touch gamepad, and the command sampler
+        ├── input/               FPS controller over the webapp devices: game actions, gamepad and touch layouts, and the command sampler
         ├── interaction/         Interaction bases (switch modes once/timed/toggle)
         ├── loader/              URL or in-memory loaders (textures, objects, instances, interactions, world)
         ├── sound/               Audio primitives: shared AudioContext with music/effects buses, in-memory PCM samples, tone synthesis, music player over a swappable synth contract

@@ -8,27 +8,28 @@
       "it"
     ],
     "missing": [],
-    "placeholders": []
+    "placeholders": [],
+    "duplicates": []
   },
   "translations/usage": {
-    "codes": 181,
+    "codes": 183,
     "unresolved": [],
     "orphans": []
   },
   "bootstrap/js": {
     "versionValid": true,
-    "declared": 327,
+    "declared": 336,
     "missing": [],
     "duplicates": [],
     "undeclared": []
   },
   "bootstrap/webapp": {
-    "files": 32,
+    "files": 48,
     "undeclared": []
   },
   "bootstrap/examples": {
     "versionValid": true,
-    "declared": 52,
+    "declared": 55,
     "missing": [],
     "notInGame": [],
     "notInDemos": [],

@@ -11,13 +11,13 @@ class MenuNetGate {
     static greyWhenUnavailable(item, unavailableReason) {
         unavailableReason().then((reason) => {
             if (reason !== null) {
-                item.classList.add('doom-menu-item-disabled');
+                item.classList.add('app-menu-item-disabled');
             }
         });
     }
 
     /**
-     * @param {MenuDisplay}                    display
+     * @param {AppMenuDisplay}                    display
      * @param {function(): Promise<string|null>} unavailableReason
      * @param {function(string)}               onReady           - receives the nickname
      */

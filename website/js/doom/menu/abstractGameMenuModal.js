@@ -1,13 +1,13 @@
 /**
  * Base of the modals the game shows over its own level (pause, death): the
- * transparent MenuDisplay plus the translucent modal overlay, a title
+ * transparent AppMenuDisplay plus the translucent modal overlay, a title
  * rebuilt through its provider whenever a stacked child closes (the language
  * may have changed), the game's save/load context feeding the stacked slots
  * modal, and the quit entry. Escape stays with the game loop.
  */
-class AbstractGameMenuModal extends AbstractMenuListModal {
+class AbstractGameMenuModal extends AppMenuAbstractListModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);
@@ -44,8 +44,8 @@ class AbstractGameMenuModal extends AbstractMenuListModal {
     show(titleProvider) {
         this._titleProvider = titleProvider ?? this._titleProvider;
 
-        const {modal} = this._createShell(this._titleProvider(), 'doom-menu-modal doom-menu-modal-wide', 'doom-menu-subtitle');
-        const listEl  = MenuDom.addElement(modal, 'div', 'doom-menu-list');
+        const {modal} = this._createShell(this._titleProvider(), 'app-menu-modal app-menu-modal-wide', 'app-menu-subtitle');
+        const listEl  = AppMenuDom.addElement(modal, 'div', 'app-menu-list');
         this._addEntries(listEl);
 
         this._nav.attach();

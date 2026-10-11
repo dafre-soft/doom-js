@@ -5,7 +5,7 @@
 class WadListScreen extends AbstractMenuScreen {
     /**
      * @param {MenuNavigator} navigator
-     * @param {MenuDisplay}   display
+     * @param {AppMenuDisplay}   display
      * @param {WadRegistry}   registry
      */
     constructor(navigator, display, registry) {
@@ -32,18 +32,18 @@ class WadListScreen extends AbstractMenuScreen {
         this._listEl = listEl;
 
         subtitleEl.classList.add('doom-menu-subtitle-with-action');
-        const joinButton = MenuDom.addButton(subtitleEl, 'doom-menu-button doom-menu-subtitle-action', appTranslator.get('multiplayer.join'),
+        const joinButton = AppMenuDom.addButton(subtitleEl, 'app-menu-button doom-menu-subtitle-action', appTranslator.get('multiplayer.join'),
             () => this._join.start());
         this._join.greyWhenUnavailable(joinButton);
 
         const corner = this._addElement('div', 'doom-menu-corner');
-        this._languageButton = MenuDom.addButton(corner, 'doom-menu-button doom-menu-language',
+        this._languageButton = AppMenuDom.addButton(corner, 'app-menu-button doom-menu-language',
             doomSettings.getListLabel(this._languageDefinition()),
             () => this._cycleLanguage());
         // Up from the list enters the row by its last button: the join one, right above the list.
         this._nav.setSideButtons([
             this._languageButton,
-            MenuDom.addButton(corner, 'doom-menu-button', appTranslator.get('help.guide'),
+            AppMenuDom.addButton(corner, 'app-menu-button', appTranslator.get('help.guide'),
                 () => this._openHelp()),
             joinButton
         ]);
@@ -100,9 +100,9 @@ class WadListScreen extends AbstractMenuScreen {
 
         if (list.length === 0) {
             this._addListEmpty(this._listEl, appTranslator.get('menu.wad.empty'));
-            MenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHint'));
-            MenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHintHelp'));
-            MenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHintSteps', {
+            AppMenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHint'));
+            AppMenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHintHelp'));
+            AppMenuDom.addText(this._listEl, 'doom-menu-empty-hint', appTranslator.get('menu.wad.emptyHintSteps', {
                 help: appTranslator.get('help.guide')
             }));
             return;
@@ -137,10 +137,10 @@ class WadListScreen extends AbstractMenuScreen {
             this._onSelectWad(meta);
         });
 
-        const infos = [((ambiguousTitle) ? meta.name : null), WadRegistry.versionLabel(meta), MenuDom.formatSize(meta.size), MenuDom.formatDay(meta.addedAt)];
+        const infos = [((ambiguousTitle) ? meta.name : null), WadRegistry.versionLabel(meta), AppMenuDom.formatSize(meta.size), AppMenuDom.formatDay(meta.addedAt)];
         this._addListItemInfos(item, infos.filter((info) => (info !== null)).join(' — '));
 
-        MenuDom.addDeleteButton(item, appTranslator.get('menu.wad.delete'), () => {
+        AppMenuDom.addDeleteButton(item, appTranslator.get('menu.wad.delete'), () => {
             this._onDeleteWad(meta);
         });
     }

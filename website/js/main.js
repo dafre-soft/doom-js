@@ -32,13 +32,16 @@ function loadApp()
     installViewportStabilizer();
 
     // The saved language is applied once the settings are read (MenuNavigator._boot).
-    appTranslator.addCatalog(DoomTranslations.CATALOG)
+    appTranslator.addCatalog(AppMenuTranslations.CATALOG)
+        .addCatalog(DoomTranslations.CATALOG)
         .setFallbackLanguage('en')
         .setLanguage('en');
 
     doomImageAssets.load();
     doomFinaleTexts.load();
     doomLevelPatches.load();
+
+    AppMenuSound.setPlayer((event) => doomSound.playUi('menu/' + event));
 
     loader.world().setUserClass(DoomUser);
 

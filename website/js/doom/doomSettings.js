@@ -1,38 +1,26 @@
 /**
- * Persistent game settings, stored as {key, value} rows in the `settings` store
- * of the spipudoom IndexedDB base. The settings UI is built from DEFINITIONS
- * and uses the generic get(); the game reads the dedicated getters.
+ * Persistent game settings, stored in the `settings` store of the spipudoom
+ * IndexedDB base. The settings UI is built from DEFINITIONS; the game reads the
+ * dedicated getters.
  *
- * Types: 'bool', 'char' (one physical key code), 'padButton' (one gamepad
- * button index, null unmapped), 'padAxis' (a signed axis code, see axisCode,
- * AXIS_NONE unmapped), 'list' (the stored value is
- * one of `values: [{code, ...}]`) and 'text' (a free string restricted to its
- * `charset`, `maxLength` long at most, uppercased). A list value carries exactly
- * one of: `label` (a proper name, never translated), `labelCode` (a translation
- * code) or `format` (the code rendered in the current locale, e.g. percentages).
+ * Types beyond those of AppSettings: 'char' (one physical key code),
+ * 'padButton' (one gamepad button index, null unmapped) and 'padAxis' (a signed
+ * axis code, see axisCode, AXIS_NONE unmapped).
  */
-class DoomSettings {
-    /**
-     * @param {number[]} percents
-     * @returns {object[]} [{code, format}]
-     */
-    static percentValues(percents) {
-        return percents.map((percent) => ({code: String(percent), format: 'percent'}));
-    }
-
+class DoomSettings extends AppSettings {
     // Fine steps at the low end: a floating touch stick re-centres at every
     // touch, so there is no hardware drift to absorb.
     static get DEAD_ZONE_VALUES() {
-        return DoomSettings.percentValues([0, 2.5, 5, 7.5, 10, 15]);
+        return AppSettings.percentValues([0, 2.5, 5, 7.5, 10, 15]);
     }
 
     // 100 % = the speed of the non-firing aim gesture.
     static get SENSITIVITY_VALUES() {
-        return DoomSettings.percentValues([60, 70, 80, 90, 100]);
+        return AppSettings.percentValues([60, 70, 80, 90, 100]);
     }
 
     static get VOLUME_VALUES() {
-        return DoomSettings.percentValues([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+        return AppSettings.percentValues([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
     }
 
     /**
@@ -119,7 +107,7 @@ class DoomSettings {
             {key: 'virtual_pad.fire_sensitivity', nameCode: 'settings.virtualPad.fireSensitivity', type: 'list', default: '80', values: DoomSettings.SENSITIVITY_VALUES},
             {key: 'mouse.y_inverse',              nameCode: 'settings.mouse.yInverse',             type: 'bool', default: false},
             // action = the engine mapping slot; the defaults mirror
-            // InputKeyboard.DEFAULT_MAPPING.
+            // Inputs.KEYBOARD_DEFAULT_MAPPING.
             {key: 'keyboard.forward',             nameCode: 'settings.keyboard.forward',           type: 'char', default: 'KeyW',      action: 'forward'},
             {key: 'keyboard.backward',            nameCode: 'settings.keyboard.backward',          type: 'char', default: 'KeyS',      action: 'backward'},
             {key: 'keyboard.strafe_left',         nameCode: 'settings.keyboard.strafeLeft',        type: 'char', default: 'KeyA',      action: 'strafeLeft'},
@@ -141,35 +129,11 @@ class DoomSettings {
     }
 
     constructor() {
-        this._database = null;
-        // Prototype-less: the keys come from the database, and '__proto__' must stay a plain key.
-        this._values   = Object.create(null);
-        this._defaults = Object.create(null);
-        for (const def of DoomSettings.DEFINITIONS) {
-            this._defaults[def.key] = def.default;
-        }
+        super(DoomSettings.DEFINITIONS, DoomDatabaseSchema.SETTING, DoomDatabaseSchema.SETTING_BY_KEY);
     }
 
-    /**
-     * A storage failure keeps all the defaults.
-     *
-     * @param {AppDatabase} database - the opened spipudoom database
-     */
-    async init(database) {
-        this._database = database;
-        this._values   = Object.create(null);
-        try {
-            const rows = await database.getAll(DoomDatabaseSchema.SETTING);
-            for (const row of rows) {
-                this._values[row.key] = row.value;
-            }
-        } catch (error) {
-            console.warn('DoomSettings - unable to load the settings: ' + error.message);
-        }
-        this._repairValues();
+    _afterLoad() {
         this._yieldTakenDefaults();
-
-        return this;
     }
 
     // A key, a button or an axis serves one action only: an action still on its
@@ -188,71 +152,8 @@ class DoomSettings {
         }
     }
 
-    // Resets every stored value its definition no longer accepts, before any
-    // consumer reads it: Object3dRendererList throws on an unknown renderer code.
-    _repairValues() {
-        for (const def of DoomSettings.DEFINITIONS) {
-            const value = this._values[def.key];
-            if ((value === undefined) || DoomSettings.isValidValue(def, value)) {
-                continue;
-            }
-            console.warn('DoomSettings - [' + def.key + '] held an invalid value, repaired');
-            this.set(def.key, DoomSettings._repairedValue(def, value));
-        }
-    }
-
-    // A text keeps what survives its sanitising; anything else falls back to the default.
-    static _repairedValue(def, value) {
-        if ((def.type === 'text') && (typeof value === 'string')) {
-            return DoomSettings.sanitizeText(def, value);
-        }
-
-        return def.default;
-    }
-
-    /**
-     * Characters a typed character stands for, once uppercased and stripped of
-     * its diacritics ('é' → 'E', 'ß' → 'SS'); '' when the charset refuses it.
-     *
-     * @param {object} def  - a 'text' definition
-     * @param {string} char
-     * @returns {string}
-     */
-    static normalizeTextChar(def, char) {
-        const plain = char.toUpperCase().normalize('NFD').replace(DoomSettings.DIACRITICS, '');
-
-        return (Array.from(plain).every((c) => def.charset.includes(c)) ? plain : '');
-    }
-
-    /**
-     * The value a 'text' setting stores: every character normalized, the
-     * refused ones dropped, inner runs of spaces collapsed, trimmed, cut to its
-     * maximum length.
-     *
-     * @param {object} def   - a 'text' definition
-     * @param {string} value
-     * @returns {string}
-     */
-    static sanitizeText(def, value) {
-        const kept = Array.from(value, (char) => DoomSettings.normalizeTextChar(def, char)).join('');
-
-        return kept.replace(/ +/g, ' ').trim().slice(0, def.maxLength).trim();
-    }
-
-    /**
-     * A 'char' accepts any string, '' meaning unmapped.
-     *
-     * @param {object} def - a DEFINITIONS entry
-     * @param {*} value
-     * @returns {boolean}
-     */
-    static isValidValue(def, value) {
-        if (def.type === 'list') {
-            return def.values.some((item) => (item.code === value));
-        }
-        if (def.type === 'bool') {
-            return (typeof value === 'boolean');
-        }
+    // A 'char' accepts any string, '' meaning unmapped.
+    isValidValue(def, value) {
         if (def.type === 'char') {
             return (typeof value === 'string');
         }
@@ -262,102 +163,8 @@ class DoomSettings {
         if (def.type === 'padAxis') {
             return ((value === DoomSettings.AXIS_NONE) || ((typeof value === 'string') && DoomSettings.AXIS_CODE.test(value)));
         }
-        if (def.type === 'text') {
-            return ((typeof value === 'string') && (DoomSettings.sanitizeText(def, value) === value));
-        }
 
-        return true;
-    }
-
-    getDefinitions(prefix) {
-        return DoomSettings.DEFINITIONS.filter((def) => def.key.startsWith(prefix));
-    }
-
-    getDefinition(key) {
-        return (DoomSettings.DEFINITIONS.find((def) => (def.key === key)) ?? null);
-    }
-
-    get(key) {
-        return ((this._values[key] !== undefined) ? this._values[key] : this._defaults[key]);
-    }
-
-    // Fire-and-forget write: the in-memory value stands even if the write fails.
-    set(key, value) {
-        this._values[key] = value;
-        if (this._database !== null) {
-            this._database.upsert(DoomDatabaseSchema.SETTING, DoomDatabaseSchema.SETTING_BY_KEY, {key: key, value: value}).catch((error) => {
-                console.warn('DoomSettings - unable to save [' + key + ']: ' + error.message);
-            });
-        }
-
-        return this;
-    }
-
-    // Fraction 0..1 of a percent-coded 'list' value ('7.5' → 0.075).
-    getPercent(key) {
-        const percent = parseFloat(this.get(key));
-        if (Number.isFinite(percent)) {
-            return (percent / 100);
-        }
-        // A NaN reaching the physics would silently freeze the stick.
-        console.warn('DoomSettings - [' + key + '] is not a number, falling back to its default');
-
-        return (parseFloat(this._defaults[key]) / 100);
-    }
-
-    /**
-     * Displayed label of the current value of a 'list' setting; a code missing
-     * from the list shows as itself.
-     *
-     * @param {object} def - a 'list' definition
-     * @returns {string}
-     */
-    getListLabel(def) {
-        const value = this.get(def.key);
-        const entry = def.values.find((item) => (item.code === value));
-        if (entry === undefined) {
-            return String(value);
-        }
-
-        return (entry.label ?? ((entry.labelCode !== undefined)
-            ? appTranslator.get(entry.labelCode)
-            : DoomSettings.formatListValue(entry)));
-    }
-
-    /**
-     * @param {object} entry - a 'list' value {code, format}
-     * @returns {string}
-     */
-    static formatListValue(entry) {
-        const locale = appTranslator.getLocale();
-        if (entry.format === 'percent') {
-            return new Intl.NumberFormat(locale, {style: 'percent', maximumFractionDigits: 1})
-                .format(parseFloat(entry.code) / 100);
-        }
-        if (entry.format === 'number') {
-            return new Intl.NumberFormat(locale).format(parseFloat(entry.code));
-        }
-        if (entry.format === 'minutes') {
-            return new Intl.NumberFormat(locale, {style: 'unit', unit: 'minute', unitDisplay: 'long'})
-                .format(parseFloat(entry.code));
-        }
-
-        return entry.code;
-    }
-
-    /**
-     * Neighbour value of a 'list' setting, wrapping around; an unknown current
-     * value restarts at the first entry.
-     *
-     * @param {object} def - a 'list' definition
-     * @param {int} direction - 1 for the next value, -1 for the previous one
-     * @returns {string} the new code
-     */
-    nextListValue(def, direction = 1) {
-        const codes = def.values.map((item) => item.code);
-        const index = codes.indexOf(this.get(def.key));
-
-        return codes[((index + direction + codes.length) % codes.length)];
+        return super.isValidValue(def, value);
     }
 
     /**
@@ -426,19 +233,6 @@ class DoomSettings {
         }
 
         return {index: parseInt(code.slice(1), 10), inverted: code.startsWith('-')};
-    }
-
-    // Wipes the whole store, not just the known keys, so orphan rows of older
-    // versions go too. Fire-and-forget like set().
-    resetAll() {
-        this._values = Object.create(null);
-        if (this._database !== null) {
-            this._database.clear(DoomDatabaseSchema.SETTING).catch((error) => {
-                console.warn('DoomSettings - unable to reset the settings: ' + error.message);
-            });
-        }
-
-        return this;
     }
 
     applyToInputs(inputs) {
@@ -587,7 +381,6 @@ class DoomSettings {
     }
 }
 
-DoomSettings.DIACRITICS               = /\p{M}/gu;
 DoomSettings.LIMIT_NONE               = 'none';
 DoomSettings.DEVICE_AUTO              = 'auto';
 DoomSettings.AXIS_NONE                = 'none';

@@ -1,10 +1,9 @@
 /**
  * Options modal of the menus: show() opens the options root (settings topics,
- * controls, reset), showAbout() and showHelp() open a standalone page. A page
- * stack sharing one MenuListNavigation: entering a topic pushes a page and the
- * title shows the breadcrumb of the stack ("Options > Controls").
+ * controls, reset), showAbout() and showHelp() open a standalone page. Adds to
+ * AppMenuSettingsModal the Controls page and its key, button and axis captures.
  */
-class MenuOptionsModal extends AbstractMenuListModal {
+class MenuOptionsModal extends AppMenuSettingsModal {
     static get DEVICE_REFRESH_MS() {
         return 500;
     }
@@ -52,24 +51,17 @@ class MenuOptionsModal extends AbstractMenuListModal {
     }
 
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
-        super(display);
+        super(display, doomSettings);
 
-        this._titleEl         = null;
-        this._bodyEl          = null;
-        this._actionButton    = null;
-        this._pageStack       = [];
-        this._pageTimer       = null;
-        this._shownDevices    = null;
-        this._captureHandler  = null;
-        this._captureTimer    = null;
-        this._pendingListView = null;
-        this._layoutMap       = null;
-        this._mode            = null;
-        this._inGame          = false;
-        this._rendererLocked  = false;
+        this._shownDevices   = null;
+        this._captureHandler = null;
+        this._captureTimer   = null;
+        this._layoutMap      = null;
+        this._inGame         = false;
+        this._rendererLocked = false;
     }
 
     // Over a running game: the multiplayer settings only apply to the next
@@ -89,12 +81,12 @@ class MenuOptionsModal extends AbstractMenuListModal {
     }
 
     show() {
-        return this._open('options', 'menu.game.options', () => this._buildRoot());
+        return this._open(false, 'menu.game.options', () => this._buildRoot());
     }
 
     // The multiplayer section alone, from the shortcut of the Multiplayer screen.
     showMultiplayer() {
-        return this._open('standalone', 'help.multiplayer', () => this._buildSettingsPage('multiplayer.'));
+        return this._open(true, 'help.multiplayer', () => this._buildSettingsPage('multiplayer.'));
     }
 
     /**
@@ -111,103 +103,37 @@ class MenuOptionsModal extends AbstractMenuListModal {
             onContinue();
         }};
 
-        return this._open('options', 'multiplayer.settings.title', () => this._buildSettingsList(keys.map((key) => doomSettings.getDefinition(key))), continuation);
+        return this._open(false, 'multiplayer.settings.title', () => this._buildSettingsList(keys.map((key) => doomSettings.getDefinition(key))), continuation);
     }
 
     showAbout() {
-        return this._open('standalone', 'help.about', () => this._buildAbout());
+        return this._open(true, 'help.about', () => this._buildAbout());
     }
 
     showHelp() {
-        return this._open('standalone', 'help.guide', () => this._buildHelp());
+        return this._open(true, 'help.guide', () => this._buildHelp());
     }
 
-    // A confirmation ({label, action}) joins the back button in the bottom row.
-    _open(mode, titleCode, builder, confirmation = null) {
-        this._mode = mode;
+    _open(standalone, titleCode, builder, confirmation = null) {
         this._loadLayoutMap();
-        const {titleEl, bodyEl, button} = this._openShell('', appTranslator.get('menu.close'), confirmation);
-        this._titleEl      = titleEl;
-        this._bodyEl       = bodyEl;
-        this._actionButton = button;
-        this._pageStack    = [];
-        this._pushPage(titleCode, builder);
 
-        return this;
+        return super._open(standalone, titleCode, builder, confirmation);
     }
 
     _teardown() {
         this._stopCapture();
-        this._clearPageTimer();
+        super._teardown();
     }
-
-    // --- Page stack ---
 
     // Also blocked while a key or gamepad capture is running.
     _navBlocked() {
         return ((this._captureHandler !== null) || (this._captureTimer !== null) || !this._isTopOverlay());
     }
 
-    // titleCode, not a resolved label: the breadcrumb is rebuilt from the codes
-    // at every render, so a language switch reaches the pages already stacked.
-    _pushPage(titleCode, builder, noBack = false) {
-        this._pageStack.push({titleCode: titleCode, builder: builder, noBack: (noBack === true)});
-        this._renderPage();
-    }
-
-    _onBack() {
-        if (this._pageStack.length <= 1) {
-            this.close();
-            return;
-        }
-        this._pageStack.pop();
-        this._renderPage();
-    }
-
-    _renderPage() {
-        this._clearPageTimer();
-        const current = this._pageStack[this._pageStack.length - 1];
-        this._titleEl.textContent        = this._pageStack.map((page) => appTranslator.get(page.titleCode)).join(' > ');
-        // The options root closes back to the menu it came from: "Back" there too.
-        const rootCode                   = ((this._mode === 'standalone') ? 'menu.close' : 'menu.back');
-        this._actionButton.textContent   = appTranslator.get(((this._pageStack.length > 1) ? 'menu.back' : rootCode));
-        // A capture page cannot be left by any mean but pressing a key.
-        this._actionButton.style.display = ((current.noBack === true) ? 'none' : '');
-        this._bodyEl.innerHTML           = '';
-        this._nav.clear();
-        current.builder();
-        if (this._pendingListView !== null) {
-            this._applyListView(this._pendingListView);
-            this._pendingListView = null;
-        }
-    }
-
-    _readListView() {
-        const list = this._bodyEl.querySelector('.doom-menu-list');
-
-        return {index: this._nav.getSelectedIndex(), scrollTop: ((list !== null) ? list.scrollTop : 0)};
-    }
-
-    // The scroll first: selecting a visible row then leaves it untouched.
-    _applyListView(view) {
-        const list = this._bodyEl.querySelector('.doom-menu-list');
-        if (list !== null) {
-            list.scrollTop = view.scrollTop;
-        }
-        this._nav.selectIndex(view.index);
-    }
-
-    _clearPageTimer() {
-        if (this._pageTimer !== null) {
-            clearInterval(this._pageTimer);
-            this._pageTimer = null;
-        }
-    }
-
     // --- Pages ---
 
     _buildRoot() {
-        const list = MenuDom.addElement(this._bodyEl, 'div', 'doom-menu-list');
+        const list = this._addList();
         this._nav.addItemIn(list, appTranslator.get('help.display'), () => this._pushPage('help.display', () => this._buildSettingsPage('display.')));
         this._nav.addItemIn(list, appTranslator.get('help.game'), () => this._pushPage('help.game', () => this._buildSettingsPage('game.')));
         if (!this._inGame) {
@@ -222,31 +148,31 @@ class MenuOptionsModal extends AbstractMenuListModal {
     // Wipes every saved setting after a confirmation.
     _confirmReset() {
         this._confirm(appTranslator.get('help.resetConfirm'), () => {
-            doomSettings.resetAll().applyToInputs(new Inputs()).applyToTranslator(appTranslator);
-            doomSound.applyVolumes();
+            doomSettings.resetAll();
+            this._applySettings();
             this._renderPage();
         }, null, appTranslator.get('menu.back'));
     }
 
     _buildControls() {
         const inputs = new Inputs();
-        const list   = MenuDom.addElement(this._bodyEl, 'div', 'doom-menu-list');
+        const list   = this._addList();
         const device = this._nav.addItemIn(list, appTranslator.get('settings.controls.device'), () => {
             this._stepDevice(inputs, 1);
         }, (dir) => {
             this._stepDevice(inputs, dir);
         });
-        MenuDom.addText(device, 'doom-menu-item-value', this._deviceChoiceLabel(this._currentDeviceChoice(inputs), inputs));
+        AppMenuDom.addText(device, 'app-menu-item-value', this._deviceChoiceLabel(this._currentDeviceChoice(inputs), inputs));
 
         this._shownDevices = this._devicesState(inputs);
         for (const prefix of MenuOptionsModal.SETTING_PREFIXES_BY_MODE[inputs.getMode()]) {
             for (const definition of doomSettings.getDefinitions(prefix)) {
-                this._addSettingItem(list, definition, inputs);
+                this._addSettingItem(list, definition);
             }
         }
         this._nav.selectFirst();
 
-        this._pageTimer = setInterval(() => {
+        this._setPageTimer(() => {
             if (this._devicesState(inputs) !== this._shownDevices) {
                 this._renderPage();
             }
@@ -320,80 +246,27 @@ class MenuOptionsModal extends AbstractMenuListModal {
         this._buildSettingsList(definitions);
     }
 
-    _buildSettingsList(definitions) {
+    // --- Settings hooks ---
+
+    _activateSetting(definition, valueEl) {
         const inputs = new Inputs();
-        const list   = MenuDom.addElement(this._bodyEl, 'div', 'doom-menu-list');
-        for (const definition of definitions) {
-            this._addSettingItem(list, definition, inputs);
+        if (definition.type === 'char') {
+            this._startKeyCapture(definition, inputs);
+            return true;
         }
-        this._nav.selectFirst();
+        if (definition.type === 'padButton') {
+            this._startPadButtonCapture(definition, inputs);
+            return true;
+        }
+        if (definition.type === 'padAxis') {
+            this._startPadAxisCapture(definition, inputs);
+            return true;
+        }
+
+        return false;
     }
 
-    _addSettingItem(listEl, definition, inputs) {
-        let valueEl = null;
-        const cycles = ((definition.type === 'bool') || (definition.type === 'list'));
-        const item   = this._nav.addItemIn(listEl, appTranslator.get(definition.nameCode), () => {
-            if (definition.type === 'char') {
-                this._startKeyCapture(definition, inputs);
-                return;
-            }
-            if (definition.type === 'padButton') {
-                this._startPadButtonCapture(definition, inputs);
-                return;
-            }
-            if (definition.type === 'padAxis') {
-                this._startPadAxisCapture(definition, inputs);
-                return;
-            }
-            if (definition.type === 'text') {
-                this._openTextEntry(definition, valueEl);
-                return;
-            }
-            this._stepSettingValue(definition, inputs, valueEl, 1);
-        }, (cycles ? (dir) => {
-            this._stepSettingValue(definition, inputs, valueEl, dir);
-        } : null));
-        valueEl = MenuDom.addText(item, 'doom-menu-item-value', this._settingValueText(definition));
-
-        return item;
-    }
-
-    // The language rewrites the WHOLE page, so the page is rebuilt instead of
-    // patched, keeping the selection.
-    _stepSettingValue(definition, inputs, valueEl, dir) {
-        const next = ((definition.type === 'bool')
-            ? !(doomSettings.get(definition.key) === true)
-            : doomSettings.nextListValue(definition, dir));
-
-        doomSettings.set(definition.key, next).applyToInputs(inputs).applyToTranslator(appTranslator);
-        doomSound.applyVolumes();
-
-        if (definition.key === 'display.language') {
-            this._pendingListView = this._readListView();
-            this._renderPage();
-            return;
-        }
-        valueEl.textContent = this._settingValueText(definition);
-    }
-
-    // Stacked above the options: the top-overlay rule mutes this modal meanwhile.
-    _openTextEntry(definition, valueEl) {
-        new MenuTextEntryModal(this._display).open(appTranslator.get(definition.nameCode), definition,
-            doomSettings.get(definition.key), (value) => {
-                doomSettings.set(definition.key, value);
-                valueEl.textContent = this._settingValueText(definition);
-            });
-    }
-
-    _settingValueText(definition) {
-        if (definition.type === 'bool') {
-            const valueCode = ((doomSettings.get(definition.key) === true) ? 'value.yes' : 'value.no');
-
-            return appTranslator.get(valueCode);
-        }
-        if (definition.type === 'list') {
-            return doomSettings.getListLabel(definition);
-        }
+    _customValueText(definition) {
         if (definition.type === 'char') {
             return this._keyLabel(doomSettings.get(definition.key));
         }
@@ -404,7 +277,16 @@ class MenuOptionsModal extends AbstractMenuListModal {
             return this._padAxisLabel(doomSettings.get(definition.key));
         }
 
-        return String(doomSettings.get(definition.key));
+        return null;
+    }
+
+    _applySettings() {
+        doomSettings.applyToInputs(new Inputs()).applyToTranslator(appTranslator);
+        doomSound.applyVolumes();
+    }
+
+    _rebuildsPage(definition) {
+        return (definition.key === MenuOptionsModal.LANGUAGE_KEY);
     }
 
     _padButtonLabel(index) {
@@ -512,7 +394,7 @@ class MenuOptionsModal extends AbstractMenuListModal {
     _openCapturePage(definition, promptCode) {
         const returnView = this._readListView();
         this._pushPage(definition.nameCode, () => {
-            MenuDom.addText(this._bodyEl, 'doom-menu-modal-line',
+            AppMenuDom.addText(this._bodyEl, 'app-menu-modal-line',
                 appTranslator.get(promptCode, {action: appTranslator.get(definition.nameCode)}));
         }, true);
 
@@ -525,9 +407,8 @@ class MenuOptionsModal extends AbstractMenuListModal {
 
     _endCapture(returnView) {
         this._stopCapture();
-        this._pageStack.pop();
-        this._pendingListView = returnView;
-        this._renderPage();
+        this._popPage();
+        this._rebuildKeepingView(returnView);
     }
 
     _stopCapture() {
@@ -597,7 +478,7 @@ class MenuOptionsModal extends AbstractMenuListModal {
             addUrl: appTranslator.get('menu.wad.addUrl')
         });
 
-        MenuDom.addText(this._bodyEl, 'doom-menu-modal-heading', appTranslator.get('help.about'));
+        this._addHeading(appTranslator.get('help.about'));
         this._buildAbout();
     }
 
@@ -608,19 +489,10 @@ class MenuOptionsModal extends AbstractMenuListModal {
         this._addLines(['help.about.copyright'], {year: new Date().getFullYear()});
     }
 
-    _addLines(codes, params = {}) {
-        for (const code of codes) {
-            MenuDom.addText(this._bodyEl, 'doom-menu-modal-line', appTranslator.get(code, params));
-        }
-    }
-
-    // The URL is its own label: an address is a proper noun, never translated.
-    _addExternalLink(url) {
-        MenuDom.addLink(this._bodyEl, 'doom-menu-modal-link', url, url);
-    }
 }
 
 MenuOptionsModal.RENDERER_KEY   = 'display.renderer';
+MenuOptionsModal.LANGUAGE_KEY   = 'display.language';
 MenuOptionsModal.MODIFIER_CODE  = /^(Shift|Control|Alt)(Left|Right)$/;
 // Key cap names, the same in every language (Shift alone is translated).
 MenuOptionsModal.MODIFIER_NAMES = {Control: 'Ctrl', Alt: 'Alt'};

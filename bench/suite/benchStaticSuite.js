@@ -1,7 +1,8 @@
 /**
- * Checks no run exercises: the translation catalog complete in every language
- * with the same placeholders, every written code resolvable, every entry used,
- * both libBootstrap.json consistent with the disk.
+ * Checks no run exercises: the translation catalogs (the webapp menus' and the
+ * game's) complete in every language with the same placeholders, no code in
+ * both, every written code resolvable, every entry used, both libBootstrap.json
+ * consistent with the disk.
  */
 const fs   = require('fs');
 const path = require('path');
@@ -21,12 +22,14 @@ class BenchStaticSuite {
     static async run(app, wads, progress) {
         const result = {};
         progress('translations');
-        const catalog = app.run('DoomTranslations.CATALOG');
-        const sources = BenchStaticSuite._sourcesOf(BenchStaticSuite.TRANSLATED_TREES)
-            .filter((file) => (file !== BenchStaticSuite.CATALOG_FILE))
+        const catalogs = BenchStaticSuite.CATALOGS.map((catalog) => app.run(catalog.expression));
+        const catalog  = Object.assign({}, ...catalogs);
+        const sources  = BenchStaticSuite._sourcesOf(BenchStaticSuite.TRANSLATED_TREES)
+            .filter((file) => !BenchStaticSuite.CATALOGS.some((entry) => (entry.file === file)))
             .map((file) => fs.readFileSync(path.join(BenchContext.WEBSITE, file), 'utf8'))
             .join('\n');
         result['translations/catalog'] = BenchStaticSuite._catalog(catalog);
+        result['translations/catalog'].duplicates = Object.keys(catalogs[0]).filter((key) => catalogs.slice(1).some((other) => (other[key] !== undefined)));
         result['translations/usage']   = BenchStaticSuite._usage(catalog, sources);
 
         const declared = new Set();
@@ -174,7 +177,10 @@ class BenchStaticSuite {
 BenchStaticSuite.TRANSLATED_TREES = ['js/doom', 'js/webapp'];
 BenchStaticSuite.WEBAPP_TREE      = 'js/webapp';
 BenchStaticSuite.ENGINE_PREFIX    = '/js/engine/';
-BenchStaticSuite.CATALOG_FILE     = '/js/doom/doomTranslations.js';
+BenchStaticSuite.CATALOGS         = [
+    {expression: 'AppMenuTranslations.CATALOG', file: '/js/webapp/menu/appMenuTranslations.js'},
+    {expression: 'DoomTranslations.CATALOG', file: '/js/doom/doomTranslations.js'}
+];
 BenchStaticSuite.PRECACHED_ONLY   = ['/js/webapp/appBootstrap.js', '/js/webapp/appServiceWorker.js'];
 BenchStaticSuite.PLACEHOLDER      = /\{([a-zA-Z0-9_]+)\}/g;
 BenchStaticSuite.CODE_LITERAL     = /'([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9_]*)+)'/g;

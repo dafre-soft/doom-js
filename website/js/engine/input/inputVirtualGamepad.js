@@ -1,8 +1,8 @@
 /**
- * Virtual on-screen gamepad input (touch-only devices).
- *
- * Read through the same API as InputGamepad (stick POSITIONS, not deltas), so
- * the game code never knows which device it talks to.
+ * The virtual on-screen gamepad as an FPS controller: the engine layout laid
+ * over the page's AppInputVirtualGamepad, read through the same API as
+ * InputGamepad (stick POSITIONS, not deltas), so the game code never knows
+ * which device it talks to.
  *
  * The layout is built for a 4-finger claw grip: the thumbs hold the bottom
  * corners (move, aim/fire — the constant actions), the index fingers the top
@@ -10,91 +10,12 @@
  * genuinely simultaneous. Run is a toggle: with both thumbs on the sticks, no
  * finger is left to hold it. Jump, crouch and use are stacked on the right
  * edge: all three are pressed while not firing, so the aim thumb is free to
- * reach them.
- *
- * Aim and fire share one gesture: the right half is a floating stick whose
- * LOWER band aims silently and UPPER band aims and fires. The mode is decided
- * on touchstart and LOCKED for the whole gesture, whatever band the finger
- * slides into afterwards — without that lock, aiming down at a low target would
- * cut the shot exactly when it matters (there is no vertical auto-aim).
- *
- * Each finger is tracked by its touch identifier, so moving, aiming and
- * pressing buttons stay independent. Touches are hit-tested buttons FIRST, then
- * the two large zones: a press landing on a button never leaks to the zone
- * underneath it.
- *
- * Three gestures come out of those two sticks — move, aim, aim+fire — and each
- * carries its OWN dead zone (setDeadZone), the firing one also scaling its
- * analog output (setFireSensitivity) so the view turns slower while shooting.
- * The mode being locked at touchstart, the gesture keeps one dead zone from
- * start to release: no discontinuity mid-slide.
+ * reach them. There is no vertical auto-aim, hence the fire band locked for
+ * the whole gesture.
  */
 class InputVirtualGamepad {
     constructor() {
-        this._overlay    = null;
-        this._moveStick  = null;   // {base, knob} of the dynamic move stick
-        this._aimStick   = null;   // {base, knob} of the floating aim stick
-        this._hintEls    = null;   // kind → outline showing where to grab that stick
-        this._buttonEls  = null;
-        this._visible    = false;
-
-        // Single source for the red control palette (sticks, buttons, bands).
-        this._color = {
-            stickRing:  'rgba(220, 60, 50, 0.7)',     // stick base outline
-            stickFill:  'rgba(220, 60, 50, 0.12)',    // stick base background
-            stickKnob:  'rgba(220, 60, 50, 0.55)',    // stick thumb knob
-            btnBorder:  'rgba(220, 60, 50, 0.8)',     // button outline, idle
-            btnFill:    'rgba(220, 60, 50, 0.18)',    // button background, idle
-            btnLabel:   'rgba(255, 220, 210, 0.9)',   // button icon
-            btnDownBorder: 'rgba(255, 130, 120, 1)',  // button outline, pressed
-            btnDownFill:   'rgba(220, 60, 50, 0.6)',  // button background, pressed
-            bandBorder:    'rgba(220, 60, 50, 0.45)', // fire/aim boundary
-            hintRing:      'rgba(220, 60, 50, 0.35)'  // resting move-stick hint
-        };
-
-        this._joy1    = { x: 0, y: 0 };
-        this._joy2    = { x: 0, y: 0 };
-        this._buttons = {
-            crouch:     false,
-            jump:       false,
-            action:     false,
-            fire:       false,
-            pause:      false,
-            map:        false,
-            run:        false,
-            weaponNext: false
-        };
-
-        // Dead zone per gesture (fraction of the stick travel) and output
-        // sensitivity of the firing gesture.
-        this._deadZone = {
-            move: InputVirtualGamepad.DEAD_ZONE_DEFAULT,
-            aim:  InputVirtualGamepad.DEAD_ZONE_DEFAULT,
-            fire: InputVirtualGamepad.DEAD_ZONE_DEFAULT
-        };
-        this._fireSensitivity = 1;
-
-        // The map and run ship hidden: unlike the others, no game has them until it asks.
-        this._buttonAllowed = {
-            jump:       true,
-            crouch:     true,
-            action:     true,
-            pause:      true,
-            weaponNext: true,
-            map:        false,
-            run:        false
-        };
-        // Fire is the aim stick's upper band, not a button: withdrawn on its own.
-        this._fireAllowed  = true;
-        this._stickAllowed = {move: true, aim: true};
-        this._aimBandEl   = null;
-
-        // touch identifier -> control owned by that finger
-        this._touches = new Map();
-
-        this._onTouchStart = this._handleTouchStart.bind(this);
-        this._onTouchMove  = this._handleTouchMove.bind(this);
-        this._onTouchEnd   = this._handleTouchEnd.bind(this);
+        this._pad = new AppInputVirtualGamepad(InputVirtualGamepad.LAYOUT);
     }
 
     /**
@@ -102,654 +23,98 @@ class InputVirtualGamepad {
      * @param {ScreenManager} screen
      */
     bindScreen(screen) {
-        this._buildOverlay(screen.getDisplay());
-        this.setVisible(this._visible);
+        this._pad.bindDisplay(screen.getDisplay());
         return this;
     }
 
-    /**
-     * Shows or hides the overlay. Driven by Inputs: only the active
-     * virtualGamepad mode shows the controls.
-     * @param {boolean} visible
-     */
+    // Driven by Inputs: only the active virtualGamepad mode shows the controls.
     setVisible(visible) {
-        this._visible = (visible === true);
-        if (this._overlay !== null) {
-            this._overlay.style.display = ((this._visible) ? 'block' : 'none');
-        }
-        if (!this._visible) {
-            this._resetState();
-        }
+        this._pad.setVisible(visible);
         return this;
     }
 
     /**
-     * Dead zone of one gesture, as a fraction of the stick travel (0 = none).
-     * An unknown kind is ignored, like Inputs.setLookInvertY.
-     *
      * @param {string} kind     'move' | 'aim' | 'fire'
      * @param {number} fraction 0..1
      */
     setDeadZone(kind, fraction) {
-        if (this._deadZone[kind] !== undefined) {
-            this._deadZone[kind] = fraction;
-        }
+        this._pad.setDeadZone(kind, fraction);
         return this;
     }
 
-    /**
-     * Output sensitivity of the FIRING gesture: its analog value is scaled by
-     * this factor, so the view turns slower while shooting and the aim stays
-     * fine (1 = same speed as the silent aim gesture). Nothing else is
-     * affected — the knob still follows the finger, and the aim and move
-     * gestures keep their full output.
-     *
-     * @param {number} factor 0..1
-     */
     setFireSensitivity(factor) {
-        this._fireSensitivity = factor;
+        this._pad.setFireSensitivity(factor);
         return this;
     }
 
     /**
-     * Takes a control away when the game has nothing for it: it stops
-     * answering touches and stops being drawn. Survives the overlay rebuild.
-     *
      * @param {string}  control 'jump' | 'crouch' | 'action' | 'pause' |
      *                          'weaponNext' | 'map' | 'run' | 'fire' | 'move' | 'aim'
      * @param {boolean} allowed
      */
     allowControl(control, allowed) {
-        if (control === 'fire') {
-            return this._allowFire(allowed);
-        }
-        if (this._stickAllowed[control] !== undefined) {
-            return this._allowStick(control, allowed);
-        }
-        if (this._buttonAllowed[control] === undefined) {
-            return this;
-        }
-
-        return this._allowButton(control, allowed);
+        this._pad.allowControl(control, allowed);
+        return this;
     }
 
     readJoy1X() {
-        return this._joy1.x;
+        return this._pad.readMoveX();
     }
 
+    // Finger up is forward, +1 in the engine convention.
     readJoy1Y() {
-        return this._joy1.y;
+        return -this._pad.readMoveY();
     }
 
     readJoy2X() {
-        return this._joy2.x;
+        return this._pad.readAimX();
     }
 
     readJoy2Y() {
-        return this._joy2.y;
+        return this._pad.readAimY();
     }
 
     readButtonJump() {
-        return this._buttons.jump;
+        return this._pad.readButton('jump');
     }
 
     readButtonAction() {
-        return this._buttons.action;
+        return this._pad.readButton('action');
     }
 
     readButtonCrouch() {
-        return this._buttons.crouch;
+        return this._pad.readButton('crouch');
     }
 
     readButtonFire() {
-        return this._buttons.fire;
+        return this._pad.readFire();
     }
 
     readButtonPause() {
-        return this._buttons.pause;
+        return this._pad.readButton('pause');
     }
 
     readButtonMap() {
-        return this._buttons.map;
+        return this._pad.readButton('map');
     }
 
     readButtonRun() {
-        return this._buttons.run;
+        return this._pad.readButton('run');
     }
 
     // The top-right zone cycles to the next weapon. There is no previous
     // binding on the virtual gamepad.
     readButtonWeaponNext() {
-        return this._buttons.weaponNext;
+        return this._pad.readButton('weaponNext');
     }
 
     readButtonWeaponPrev() {
         return false;
     }
-
-    // --- DOM ---
-
-    _buildOverlay(display) {
-        this._resetState();
-
-        const overlay = document.createElement('div');
-        overlay.style.position      = 'absolute';
-        overlay.style.top           = '0';
-        overlay.style.left          = '0';
-        overlay.style.width         = '100%';
-        overlay.style.height        = '100%';
-        overlay.style.zIndex        = '10';
-        overlay.style.touchAction   = 'none';
-        overlay.style.userSelect    = 'none';
-        // Container reference so every target and icon sizes against the
-        // display height (cqh), staying coherent in letterbox.
-        overlay.style.containerType = 'size';
-
-        this._buildAimBand(overlay);
-        this._buildHints(overlay);
-
-        // The sticks are dynamic: their base is placed under the finger on
-        // touchstart and hidden again on release.
-        this._moveStick = this._createStick(overlay);
-        this._aimStick  = this._createStick(overlay);
-
-        this._buttonEls = {};
-        for (const name in InputVirtualGamepad.BUTTONS) {
-            this._buttonEls[name] = this._createRect(overlay, InputVirtualGamepad.BUTTONS[name]);
-            this._setButtonPressed(name, this._buttons[name]);
-        }
-        for (const name in this._buttonAllowed) {
-            this._applyButtonAllowed(name);
-        }
-
-        overlay.addEventListener('touchstart',  this._onTouchStart, { passive: false });
-        overlay.addEventListener('touchmove',   this._onTouchMove,  { passive: false });
-        overlay.addEventListener('touchend',    this._onTouchEnd,   { passive: false });
-        overlay.addEventListener('touchcancel', this._onTouchEnd,   { passive: false });
-
-        display.appendChild(overlay);
-        this._overlay = overlay;
-    }
-
-    // The fire band marker: the boundary between "aim" and "aim + fire" is
-    // invisible by nature, so it gets an icon and a short dash at its right end
-    // — without them a player cannot tell why a shot goes off sometimes only.
-    // No fill and no full-width rule: over half the screen, either veils the
-    // scene.
-    _buildAimBand(overlay) {
-        const aim   = InputVirtualGamepad.AIM_AREA;
-        const split = InputVirtualGamepad.AIM_FIRE_SPLIT;
-
-        const band = document.createElement('div');
-        band.style.position      = 'absolute';
-        band.style.left          = (aim.x * 100) + '%';
-        band.style.top           = (aim.y * 100) + '%';
-        band.style.width         = (aim.w * 100) + '%';
-        band.style.height        = (aim.h * split * 100) + '%';
-        band.style.boxSizing     = 'border-box';
-        band.style.pointerEvents = 'none';
-
-        const mark = document.createElement('div');
-        mark.style.position      = 'absolute';
-        mark.style.right         = '0';
-        mark.style.bottom        = '0';
-        mark.style.width         = (InputVirtualGamepad.AIM_SPLIT_MARK_WIDTH * 100) + '%';
-        mark.style.borderBottom  = '0.4cqh dashed ' + this._color.bandBorder;
-        mark.style.pointerEvents = 'none';
-
-        const marker = this._createIconBox('aim', InputVirtualGamepad.AIM_MARK_ICON_SIZE);
-        marker.style.position      = 'absolute';
-        marker.style.left          = '50%';
-        marker.style.bottom        = '0';
-        marker.style.transform     = 'translateX(-50%)';
-        marker.style.color         = this._color.btnLabel;
-        marker.style.pointerEvents = 'none';
-        mark.appendChild(marker);
-
-        band.appendChild(mark);
-        overlay.appendChild(band);
-        this._aimBandEl = band;
-        this._applyFireAllowed();
-    }
-
-    // A dynamic stick has no base of its own at rest, which leaves its whole
-    // zone looking inert: these outlines say where to grab each one. They step
-    // aside while the real base is placed under the finger.
-    _buildHints(overlay) {
-        this._hintEls = {};
-        for (const kind in InputVirtualGamepad.STICK_HINTS) {
-            const hint = this._createCircle();
-            hint.style.height = (InputVirtualGamepad.STICK_RADIUS_RATIO * 2 * 100) + '%';
-            hint.style.left   = (InputVirtualGamepad.STICK_HINTS[kind].x * 100) + '%';
-            hint.style.top    = (InputVirtualGamepad.STICK_HINTS[kind].y * 100) + '%';
-            hint.style.border = '0.4cqh dashed ' + this._color.hintRing;
-            overlay.appendChild(hint);
-            this._hintEls[kind] = hint;
-            this._setHintVisible(kind, true);
-        }
-    }
-
-    // A withdrawn stick shows no outline either.
-    _setHintVisible(kind, visible) {
-        if (this._hintEls !== null) {
-            this._hintEls[kind].style.display = ((visible && this._stickAllowed[kind]) ? 'block' : 'none');
-        }
-    }
-
-    // Square box holding one icon, its side given in cqh.
-    _createIconBox(name, sizeCqh) {
-        const box = document.createElement('div');
-        box.style.height      = sizeCqh + 'cqh';
-        box.style.aspectRatio = '1 / 1';
-        box.innerHTML         = InputVirtualGamepad.iconSvg(name);
-
-        return box;
-    }
-
-    // Icons are drawn here, never taken from the system font: a font without a
-    // text glyph for an emoji renders it in colour (iOS), and the metrics of a
-    // glyph differ per platform. currentColor carries the label colour.
-    static iconSvg(name) {
-        const icon = InputVirtualGamepad.ICONS[name];
-
-        return '<svg viewBox="' + (icon.viewBox ?? '0 0 24 24') + '" width="100%" height="100%"'
-            + ' fill="currentColor" aria-hidden="true">' + icon.shapes + '</svg>';
-    }
-
-    // The `dashed` variant is the weapon zone: a transparent outline over the
-    // HUD's ARMS panel, its icon tucked in a corner so it never sits on the
-    // panel's slot numbers. The idle background is stored on the element, since
-    // releasing a press has to restore that exact value.
-    _createRect(overlay, layout) {
-        const dashed = (layout.dashed === true);
-        const el = document.createElement('div');
-        el.style.position       = 'absolute';
-        el.style.left           = (layout.x * 100) + '%';
-        el.style.top            = (layout.y * 100) + '%';
-        el.style.width          = (layout.w * 100) + '%';
-        el.style.height         = (layout.h * 100) + '%';
-        el.style.boxSizing      = 'border-box';
-        el.style.border         = '0.5cqh ' + ((dashed) ? 'dashed' : 'solid') + ' ' + this._color.btnBorder;
-        el.style.borderRadius   = ((dashed) ? '3cqh' : '2.5cqh');
-        el.style.background     = ((dashed) ? 'transparent' : this._color.btnFill);
-        el.style.color          = this._color.btnLabel;
-        el.style.display        = 'flex';
-        el.style.alignItems     = ((dashed) ? 'flex-end' : 'center');
-        el.style.justifyContent = ((dashed) ? 'flex-start' : 'center');
-        el.style.padding        = ((dashed) ? '1.5cqh' : '0');
-        el.style.pointerEvents  = 'none';
-        const scale = (layout.iconScale ?? InputVirtualGamepad.ICON_SCALE_DEFAULT);
-        el.appendChild(this._createIconBox(layout.icon, scale * layout.h * 100));
-        el.dataset.idleBackground = el.style.background;
-        overlay.appendChild(el);
-        return el;
-    }
-
-    _createCircle() {
-        const el = document.createElement('div');
-        el.style.position      = 'absolute';
-        el.style.aspectRatio   = '1 / 1';
-        el.style.transform     = 'translate(-50%, -50%)';
-        el.style.borderRadius  = '50%';
-        el.style.boxSizing     = 'border-box';
-        el.style.pointerEvents = 'none';
-        return el;
-    }
-
-    // The knob is a CHILD of the base, so its deflection is expressed in % of
-    // the base — no pixel math to render. Hidden until a finger places it.
-    _createStick(overlay) {
-        const diameterPct = (InputVirtualGamepad.STICK_RADIUS_RATIO * 2 * 100);
-
-        const base = this._createCircle();
-        base.style.height     = diameterPct + '%';
-        base.style.border     = '0.5cqh solid ' + this._color.stickRing;
-        base.style.background = this._color.stickFill;
-        base.style.display    = 'none';
-
-        const knob = this._createCircle();
-        knob.style.height     = (InputVirtualGamepad.KNOB_RATIO * 100) + '%';
-        knob.style.left       = '50%';
-        knob.style.top        = '50%';
-        knob.style.background = this._color.stickKnob;
-
-        base.appendChild(knob);
-        overlay.appendChild(base);
-        return { base: base, knob: knob };
-    }
-
-    // Pixel coordinates go back to % so the letterbox scaling applies.
-    _placeStick(stick, px, py, rect) {
-        stick.base.style.left    = ((px / rect.width) * 100) + '%';
-        stick.base.style.top     = ((py / rect.height) * 100) + '%';
-        stick.base.style.display = 'block';
-        this._setKnob(stick, 0, 0);
-    }
-
-    _hideStick(stick) {
-        stick.base.style.display = 'none';
-        this._setKnob(stick, 0, 0);
-    }
-
-    // dx/dy are normalized (-1..+1). A full deflection is one base RADIUS, i.e.
-    // half the base diameter, which the knob expresses in % of its own size.
-    _setKnob(stick, dx, dy) {
-        const offset = (50 / InputVirtualGamepad.KNOB_RATIO);
-        const tx = (-50 + (dx * offset));
-        const ty = (-50 + (dy * offset));
-        stick.knob.style.transform = ('translate(' + tx + '%, ' + ty + '%)');
-    }
-
-    // No-op before the overlay is built.
-    _setButtonPressed(name, pressed) {
-        if (this._buttonEls === null) {
-            return;
-        }
-        const el = this._buttonEls[name];
-        el.style.background  = ((pressed) ? this._color.btnDownFill : el.dataset.idleBackground);
-        el.style.borderColor = ((pressed) ? this._color.btnDownBorder : this._color.btnBorder);
-    }
-
-    // --- Touch handling ---
-
-    // Touch coordinates drift from getBoundingClientRect once iOS Safari's
-    // toolbar collapses after a rotation: the visual-viewport offset realigns them.
-    _overlayRect() {
-        const r    = this._overlay.getBoundingClientRect();
-        const vv   = window.visualViewport;
-        const offX = ((vv) ? vv.offsetLeft : 0);
-        const offY = ((vv) ? vv.offsetTop  : 0);
-        return { left: (r.left + offX), top: (r.top + offY), width: r.width, height: r.height };
-    }
-
-    _handleTouchStart(event) {
-        event.preventDefault();
-        const rect = this._overlayRect();
-        for (const touch of event.changedTouches) {
-            this._assignTouch(touch, rect);
-        }
-    }
-
-    _handleTouchMove(event) {
-        event.preventDefault();
-        const rect = this._overlayRect();
-        for (const touch of event.changedTouches) {
-            const owned = this._touches.get(touch.identifier);
-            if ((owned === undefined) || ((owned.kind !== 'move') && (owned.kind !== 'aim'))) {
-                continue;
-            }
-            this._updateStick(owned, (touch.clientX - rect.left), (touch.clientY - rect.top), rect);
-        }
-    }
-
-    _handleTouchEnd(event) {
-        event.preventDefault();
-        for (const touch of event.changedTouches) {
-            const owned = this._touches.get(touch.identifier);
-            if (owned === undefined) {
-                continue;
-            }
-            this._touches.delete(touch.identifier);
-            this._releaseControl(owned);
-        }
-    }
-
-    _releaseControl(owned) {
-        if (owned.kind === 'toggle') {
-            return;
-        }
-        if (owned.kind === 'button') {
-            this._buttons[owned.button] = false;
-            this._setButtonPressed(owned.button, false);
-            return;
-        }
-        if (owned.kind === 'move') {
-            this._joy1.x = 0;
-            this._joy1.y = 0;
-            this._hideStick(this._moveStick);
-            this._setHintVisible('move', true);
-            return;
-        }
-        this._joy2.x = 0;
-        this._joy2.y = 0;
-        this._hideStick(this._aimStick);
-        this._setHintVisible('aim', true);
-        if (owned.fire) {
-            this._buttons.fire = false;
-        }
-    }
-
-    // Assigns a new finger to a control, hit-tested by priority: the small
-    // targets (buttons, weapon zone) first, then the two large zones — a
-    // press landing on a button never reaches the zone underneath.
-    _assignTouch(touch, rect) {
-        const px = touch.clientX - rect.left;
-        const py = touch.clientY - rect.top;
-        const nx = px / rect.width;
-        const ny = py / rect.height;
-
-        const button = this._hitButton(nx, ny);
-        if ((button !== null) && (InputVirtualGamepad.BUTTONS[button].toggle === true)) {
-            this._buttons[button] = !this._buttons[button];
-            this._setButtonPressed(button, this._buttons[button]);
-            this._touches.set(touch.identifier, { kind: 'toggle', button: button });
-            return;
-        }
-        if (button !== null) {
-            this._buttons[button] = true;
-            this._setButtonPressed(button, true);
-            this._touches.set(touch.identifier, { kind: 'button', button: button });
-            return;
-        }
-
-        // One finger per zone: a second touch inside a zone already owned is
-        // ignored rather than stealing the active stick.
-        if (this._stickAllowed.aim && this._inArea(InputVirtualGamepad.AIM_AREA, nx, ny) && !this._hasKind('aim')) {
-            // The band decides the mode ONCE, here: the gesture keeps it until
-            // the finger is lifted, wherever it slides.
-            const fire  = (this._fireAllowed
-                && (ny < (InputVirtualGamepad.AIM_AREA.y + InputVirtualGamepad.AIM_AREA.h * InputVirtualGamepad.AIM_FIRE_SPLIT)));
-            const owned = { kind: 'aim', ox: px, oy: py, fire: fire };
-            this._touches.set(touch.identifier, owned);
-            this._placeStick(this._aimStick, px, py, rect);
-            this._setHintVisible('aim', false);
-            this._buttons.fire = fire;
-            return;
-        }
-
-        if (this._stickAllowed.move && this._inArea(InputVirtualGamepad.MOVE_AREA, nx, ny) && !this._hasKind('move')) {
-            const owned = { kind: 'move', ox: px, oy: py, fire: false };
-            this._touches.set(touch.identifier, owned);
-            this._placeStick(this._moveStick, px, py, rect);
-            this._setHintVisible('move', false);
-        }
-    }
-
-    _hasKind(kind) {
-        for (const owned of this._touches.values()) {
-            if (owned.kind === kind) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    _inArea(area, nx, ny) {
-        return ((nx >= area.x) && (nx <= (area.x + area.w))
-            && (ny >= area.y) && (ny <= (area.y + area.h)));
-    }
-
-    _hitButton(nx, ny) {
-        for (const name in InputVirtualGamepad.BUTTONS) {
-            if (this._buttonAllowed[name] === false) {
-                continue;
-            }
-            if (this._inArea(InputVirtualGamepad.BUTTONS[name], nx, ny)) {
-                return name;
-            }
-        }
-        return null;
-    }
-
-    // Granted again on every level: only a withdrawal lets go of the button, so
-    // a toggle keeps its state from one level to the next.
-    _allowButton(name, allowed) {
-        this._buttonAllowed[name] = (allowed === true);
-        if (!this._buttonAllowed[name]) {
-            this._buttons[name] = false;
-            this._setButtonPressed(name, false);
-        }
-        this._applyButtonAllowed(name);
-
-        return this;
-    }
-
-    // Visibility rather than display: the target keeps the geometry the
-    // (DOM-independent) hit test reads, so the two never disagree.
-    _applyButtonAllowed(name) {
-        if (this._buttonEls === null) {
-            return;
-        }
-        this._buttonEls[name].style.visibility = ((this._buttonAllowed[name]) ? 'visible' : 'hidden');
-    }
-
-    _allowFire(allowed) {
-        this._fireAllowed  = (allowed === true);
-        this._buttons.fire = false;
-        // The mode is locked at touchstart, so a gesture in flight would keep
-        // the fire dead zone and its damped output until the finger lifts.
-        for (const owned of this._touches.values()) {
-            if (owned.kind === 'aim') {
-                owned.fire = false;
-            }
-        }
-        this._applyFireAllowed();
-
-        return this;
-    }
-
-    // The band marks a mode of the aim stick: it goes with the stick too.
-    _applyFireAllowed() {
-        if (this._aimBandEl !== null) {
-            this._aimBandEl.style.visibility = ((this._fireAllowed && this._stickAllowed.aim) ? 'visible' : 'hidden');
-        }
-    }
-
-    // A finger holding a withdrawn stick lets go of it at once.
-    _allowStick(kind, allowed) {
-        this._stickAllowed[kind] = (allowed === true);
-        if (!this._stickAllowed[kind]) {
-            for (const [identifier, owned] of this._touches) {
-                if (owned.kind === kind) {
-                    this._touches.delete(identifier);
-                    this._releaseControl(owned);
-                }
-            }
-        }
-        this._setHintVisible(kind, !this._hasKind(kind));
-        this._applyFireAllowed();
-
-        return this;
-    }
-
-    // Deflection from the finger's OWN origin (both sticks are relative), the
-    // knob follows it, and the axes are stored with the engine sign convention
-    // (joy1Y forward = up, joy2Y down = down). The firing gesture's OUTPUT is
-    // scaled by its sensitivity — the knob keeps following the finger, only the
-    // value the game reads is damped.
-    _updateStick(owned, px, py, rect) {
-        const radius = (rect.height * InputVirtualGamepad.STICK_RADIUS_RATIO);
-        let nx = ((px - owned.ox) / radius);
-        let ny = ((py - owned.oy) / radius);
-        const mag = Math.sqrt((nx * nx) + (ny * ny));
-        if (mag > 1) {
-            nx = nx / mag;
-            ny = ny / mag;
-        }
-
-        const isMove = (owned.kind === 'move');
-        this._setKnob(((isMove) ? this._moveStick : this._aimStick), nx, ny);
-
-        const out   = this._applyDeadZone(nx, ny, owned);
-        const scale = ((owned.fire) ? this._fireSensitivity : 1);
-        const joy   = ((isMove) ? this._joy1 : this._joy2);
-        joy.x = out.x * scale;
-        joy.y = ((isMove) ? -out.y : out.y) * scale;
-    }
-
-    // The firing gesture is a mode of the aim stick, not a third stick.
-    _deadZoneKey(owned) {
-        if (owned.kind === 'move') {
-            return 'move';
-        }
-        return ((owned.fire) ? 'fire' : 'aim');
-    }
-
-    _applyDeadZone(nx, ny, owned) {
-        const mag    = Math.min(Math.sqrt((nx * nx) + (ny * ny)), 1);
-        const scaled = Inputs.rescaleDeadZone(mag, this._deadZone[this._deadZoneKey(owned)]);
-        if (scaled === 0) {
-            return {x: 0, y: 0};
-        }
-        const factor = scaled / mag;
-        return {x: nx * factor, y: ny * factor};
-    }
-
-    // Neutralizes every input but the toggles (used on rebuild and when the
-    // overlay is hidden, since hiding fires no touchend for fingers still down).
-    _resetState() {
-        this._touches.clear();
-        this._joy1.x = 0;
-        this._joy1.y = 0;
-        this._joy2.x = 0;
-        this._joy2.y = 0;
-        for (const name in this._buttons) {
-            if (InputVirtualGamepad.BUTTONS[name]?.toggle !== true) {
-                this._buttons[name] = false;
-            }
-        }
-        if (this._buttonEls !== null) {
-            for (const name in this._buttonEls) {
-                this._setButtonPressed(name, this._buttons[name]);
-            }
-        }
-        if (this._moveStick !== null) {
-            this._hideStick(this._moveStick);
-        }
-        if (this._aimStick !== null) {
-            this._hideStick(this._aimStick);
-        }
-        if (this._hintEls !== null) {
-            for (const kind in this._hintEls) {
-                this._setHintVisible(kind, true);
-            }
-        }
-    }
 }
 
 // --- On-screen layout, in fractions of the letterboxed display ---
 
-// Zone of the dynamic move stick (bottom-left quadrant, left thumb).
-InputVirtualGamepad.MOVE_AREA = {x: 0, y: 0.5, w: 0.5, h: 0.5};
-// Centre of the outline hinting at each stick while no finger holds it — the
-// thumbs' resting spots, symmetric on both edges.
-InputVirtualGamepad.STICK_HINTS = {
-    move: {x: 0.170, y: 0.698},
-    aim:  {x: 0.830, y: 0.698}
-};
-// Aim zone (right half, right thumb) and the height fraction of it that also
-// fires: above the split = aim + fire, below = aim only. 0.498 and not 0.5, so
-// its marker keeps the button gap above the column below it.
-InputVirtualGamepad.AIM_AREA       = {x: 0.5, y: 0, w: 0.5, h: 1};
-InputVirtualGamepad.AIM_FIRE_SPLIT = 0.498;
-// Stick radius (fraction of the display height) at which a stick saturates, and
-// the knob size as a fraction of the base — _setKnob derives its deflection
-// offset from that ratio.
-InputVirtualGamepad.STICK_RADIUS_RATIO = 0.12;
-InputVirtualGamepad.KNOB_RATIO         = 0.45;
-// Default dead zone of every gesture, as a fraction of the stick travel — used
-// until the game pushes its own values (setDeadZone).
-InputVirtualGamepad.DEAD_ZONE_DEFAULT = 0.15;
 // Icon drawings, each centred on its ink centroid inside its 24×24 box — the
 // hand's box is offset to achieve it, the symmetrical ones need nothing.
 InputVirtualGamepad.ICONS = {
@@ -779,32 +144,42 @@ InputVirtualGamepad.ICONS = {
                    + '<path d="M10.6 5 L17.8 12 L10.6 19 H15 L22.2 12 L15 5 Z"/>'}
 };
 
-// Icon side as a fraction of its button's height, and the height of the
-// aim/fire split marker's own icon in cqh (it has no button).
-InputVirtualGamepad.ICON_SCALE_DEFAULT = 0.5;
-InputVirtualGamepad.AIM_MARK_ICON_SIZE = 5.5;
-
-// Rectangular targets, hit-tested in declaration order, all the buttons the
-// same size; a `toggle` one flips on each tap instead of following the finger.
-// The right column (jump, crouch, use) sits as low as the HUD allows: below it
-// the ammo block starts at y 0.86. Menu clears the counters block, which ends
-// at y 0.18; the weapon zone is drawn dashed over the ARMS panel (one tap =
-// next weapon).
+// All the buttons the same size; run is a toggle. The right column (jump,
+// crouch, use) sits as low as the HUD allows: below it the ammo block starts at
+// y 0.86. Menu clears the counters block, which ends at y 0.18; the weapon zone
+// is drawn dashed over the ARMS panel (one tap = next weapon), its icon tucked
+// in a corner so it never sits on the panel's slot numbers. The map and run
+// ship hidden: unlike the others, no game has them until it asks.
 InputVirtualGamepad.BUTTONS = {
     pause:      {x: 0.128, y: 0.020, w: 0.079, h: 0.112, icon: 'menu'},
     // Right of the menu: on its left it would sit on the HUD's keys / secrets /
     // kills block.
-    map:        {x: 0.216, y: 0.020, w: 0.079, h: 0.112, icon: 'map'},
-    run:        {x: 0.304, y: 0.020, w: 0.079, h: 0.112, icon: 'run', toggle: true},
+    map:        {x: 0.216, y: 0.020, w: 0.079, h: 0.112, icon: 'map', allowed: false},
+    run:        {x: 0.304, y: 0.020, w: 0.079, h: 0.112, icon: 'run', toggle: true, allowed: false},
     jump:       {x: 0.902, y: 0.506, w: 0.079, h: 0.112, icon: 'jump'},
     crouch:     {x: 0.902, y: 0.626, w: 0.079, h: 0.112, icon: 'crouch'},
     action:     {x: 0.902, y: 0.746, w: 0.079, h: 0.112, icon: 'action'},
     weaponNext: {x: 0.700, y: 0.000, w: 0.300, h: 0.150, icon: 'weapon', dashed: true, iconScale: 0.28}
 };
 
+// Aim zone (right half, right thumb) and the height fraction of it that also
+// fires: above the split = aim + fire, below = aim only. 0.498 and not 0.5, so
+// its marker keeps the button gap above the column below it.
+InputVirtualGamepad.AIM_AREA = {x: 0.5, y: 0, w: 0.5, h: 1};
+
 InputVirtualGamepad.COLUMN_EDGE_MARGIN = 1 - (InputVirtualGamepad.BUTTONS.action.x + InputVirtualGamepad.BUTTONS.action.w);
-// Dash marking the aim/fire split, as a fraction of the aim zone width: from
-// the screen edge to one column margin left of the buttons, so it frames them
-// instead of reading as scenery — which a full-width rule does.
-InputVirtualGamepad.AIM_SPLIT_MARK_WIDTH =
-    (1 - (InputVirtualGamepad.BUTTONS.action.x - InputVirtualGamepad.COLUMN_EDGE_MARGIN)) / InputVirtualGamepad.AIM_AREA.w;
+
+InputVirtualGamepad.LAYOUT = {
+    // Bottom-left quadrant, left thumb.
+    moveArea:          {x: 0, y: 0.5, w: 0.5, h: 0.5},
+    aimArea:           InputVirtualGamepad.AIM_AREA,
+    aimFireSplit:      0.498,
+    // From the screen edge to one column margin left of the buttons, so the
+    // dash frames them instead of reading as scenery — which a full-width rule does.
+    aimSplitMarkWidth: (1 - (InputVirtualGamepad.BUTTONS.action.x - InputVirtualGamepad.COLUMN_EDGE_MARGIN)) / InputVirtualGamepad.AIM_AREA.w,
+    aimMarkIcon:       'aim',
+    // The thumbs' resting spots, symmetric on both edges.
+    stickHints:        {move: {x: 0.170, y: 0.698}, aim: {x: 0.830, y: 0.698}},
+    buttons:           InputVirtualGamepad.BUTTONS,
+    icons:             InputVirtualGamepad.ICONS
+};

@@ -5,7 +5,7 @@
  */
 class MenuNetMessages {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      * @param {string}      reason  - DoomNetAvailability.NO_*
      */
     static showUnavailable(display, reason) {
@@ -14,7 +14,7 @@ class MenuNetMessages {
     }
 
     /**
-     * @param {MenuDisplay}   display
+     * @param {AppMenuDisplay}   display
      * @param {string}        reason  - DoomNetProtocol.END_*
      * @param {function|null} onClose
      */

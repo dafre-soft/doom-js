@@ -9,37 +9,6 @@ class DoomTranslations {
     static get CATALOG() {
         return {
             // --- Menu screens ---
-            'menu.back': {
-                fr: 'Retour',
-                en: 'Back',
-                it: 'Indietro',
-                es: 'Volver'
-            },
-            'menu.close': {
-                fr: 'Fermer',
-                en: 'Close',
-                it: 'Chiudi',
-                es: 'Cerrar'
-            },
-            'menu.confirm': {
-                fr: 'Confirmer',
-                en: 'Confirm',
-                it: 'Conferma',
-                es: 'Confirmar'
-            },
-            'menu.cancel': {
-                fr: 'Annuler',
-                en: 'Cancel',
-                it: 'Annulla',
-                es: 'Cancelar'
-            },
-            // Accessible name of the erase key of the on-screen keyboard.
-            'menu.keyboard.erase': {
-                fr: 'Effacer',
-                en: 'Erase',
-                it: 'Cancella',
-                es: 'Borrar'
-            },
             'menu.storageUnavailable': {
                 fr: 'Stockage navigateur indisponible — impossible de gérer les WADs.',
                 en: 'Browser storage unavailable — WADs cannot be managed.',
@@ -483,18 +452,6 @@ class DoomTranslations {
             },
 
             // Setting values and input devices
-            'value.yes': {
-                fr: 'Oui',
-                en: 'Yes',
-                it: 'Sì',
-                es: 'Sí'
-            },
-            'value.no': {
-                fr: 'Non',
-                en: 'No',
-                it: 'No',
-                es: 'No'
-            },
             'value.noLimit': {
                 fr: 'Aucune',
                 en: 'None',
@@ -533,12 +490,6 @@ class DoomTranslations {
                 en: 'Software wireframe',
                 it: 'Software wireframe',
                 es: 'Software de alambre'
-            },
-            'key.space': {
-                fr: 'Espace',
-                en: 'Space',
-                it: 'Spazio',
-                es: 'Espacio'
             },
             'key.shift': {
                 fr: 'Maj',
@@ -871,26 +822,6 @@ class DoomTranslations {
                 en: 'Invisibility',
                 it: 'Invisibilità',
                 es: 'Invisibilidad'
-            },
-
-            // --- Units (byte sizes) ---
-            'unit.megabyte': {
-                fr: 'Mo',
-                en: 'MB',
-                it: 'MB',
-                es: 'MB'
-            },
-            'unit.kilobyte': {
-                fr: 'Ko',
-                en: 'KB',
-                it: 'KB',
-                es: 'KB'
-            },
-            'unit.byte': {
-                fr: 'o',
-                en: 'B',
-                it: 'B',
-                es: 'B'
             },
 
             // --- Difficulties ---

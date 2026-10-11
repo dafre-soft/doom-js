@@ -1,24 +1,17 @@
 /*
- * SpipuDoom menu - displayed inside the MenuDisplay 1920x1080 virtual screen.
- * The container font-size is scaled by the display ratio (30px at ratio 1):
- * every size below is in em, so the whole menu stays proportional.
+ * Spipu-Doom theme of the menus: colours, fonts, borders and backgrounds of the
+ * app-menu-* structure (css/webapp/appMenu.css, loaded first), plus the doom
+ * screens and modals. Every size is in em, like the structure.
  */
 
-.doom-menu-display {
-    position: relative;
-    overflow: hidden;
+.app-menu-display {
     background:
         radial-gradient(ellipse at center, rgba(60, 12, 8, 0.40), rgba(0, 0, 0, 0.95) 75%),
         #000;
 }
 
-/* Pause variant: transparent and pinned over the running game, so only the
-   modal overlay (rgba 0.7) darkens the frozen frame underneath. */
-.doom-menu-display-over-game {
+.app-menu-display-transparent {
     background: none;
-    position: fixed;
-    inset: 0;
-    margin: auto;
 }
 
 .doom-menu {
@@ -33,7 +26,6 @@
 }
 
 /* --- Title (same identity as the loading screen) --- */
-
 .doom-menu-title {
     color: #C0392B;
     font-size: 2.2em;
@@ -45,7 +37,6 @@
 }
 
 /* --- Central panel --- */
-
 /* Fixed height: every screen (WAD list, difficulty, levels) shows the same
    panel size, the list inside grows and scrolls. */
 .doom-menu-panel {
@@ -60,14 +51,11 @@
     box-shadow: 0 0 1.5em rgba(192, 57, 43, 0.15);
 }
 
-.doom-menu-subtitle {
-    flex-shrink: 0;
+.app-menu-subtitle {
     color: rgba(255, 255, 255, 0.75);
     font-size: 1.05em;
     letter-spacing: 0.25em;
     text-transform: uppercase;
-    padding-bottom: 0.7em;
-    margin-bottom: 0.7em;
     border-bottom: 0.05em solid rgba(192, 57, 43, 0.25);
 }
 
@@ -81,119 +69,65 @@
     margin-left: auto;
 }
 
-/* --- List --- */
-
-/* The list is the only growing/shrinking child of the fixed-height panel:
-   it fills the free space and scrolls when its content overflows (min-height
-   0 lifts the flexbox min-height:auto floor that would block the scroll). */
-.doom-menu-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    /* Vertical cushion: an entry border flush with the clip edge gets eaten
-       by fractional em positions (sub-pixel borders on phones). */
-    padding: 0.1em 0;
-    margin-bottom: 0.7em;
-}
-
-/* Scrollbar skin shared by every scrolling menu area. */
-.doom-menu-list,
-.doom-menu-modal-options-body {
-    scrollbar-width: thin;
+.app-menu-list,
+.app-menu-modal-list-body {
     scrollbar-color: rgba(192, 57, 43, 0.4) transparent;
 }
 
-.doom-menu-list::-webkit-scrollbar,
-.doom-menu-modal-options-body::-webkit-scrollbar {
-    width: 0.2em;
-}
-
-.doom-menu-list::-webkit-scrollbar-thumb,
-.doom-menu-modal-options-body::-webkit-scrollbar-thumb {
+.app-menu-list::-webkit-scrollbar-thumb,
+.app-menu-modal-list-body::-webkit-scrollbar-thumb {
     background: rgba(192, 57, 43, 0.4);
     border-radius: 0.1em;
 }
 
-.doom-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.6em;
-    padding: 0.45em 0.6em;
-    margin-bottom: 0.25em;
+.app-menu-item {
     background: rgba(255, 255, 255, 0.04);
     border: max(0.04em, 1px) solid transparent;
     border-radius: 0.2em;
-    cursor: pointer;
     color: #FFF;
-}
-
-.doom-menu-item:last-child {
-    margin-bottom: 0;
 }
 
 /* Hovering only moves the shared selection (mouse, keyboard and gamepad all
    drive the same highlighted entry). Pre-brightened colors, no filter: a
    filter here makes iOS re-run its text autosizing on the selected label. */
-.doom-menu-item-selected {
+.app-menu-item-selected {
     border-color: rgba(231, 76, 60, 0.8);
     background: rgba(231, 76, 60, 0.18);
 }
 
 /* Press feedback: a beat brighter than the selection, before the action. */
-.doom-menu-item-pressed {
+.app-menu-item-pressed {
     border-color: #E74C3C;
     background: rgba(231, 76, 60, 0.45);
 }
 
-.doom-menu-item-label {
-    flex: 1;
+.app-menu-item-label {
     font-size: 1em;
     letter-spacing: 0.08em;
 }
 
-.doom-menu-item-infos {
+.app-menu-item-infos {
     color: rgba(255, 255, 255, 0.28);
     font-size: 0.75em;
     letter-spacing: 0.1em;
 }
 
-/* Colour of a player's slot in a cooperative lobby, before its nickname. */
-.doom-menu-color-swatch {
-    flex-shrink: 0;
-    width: 0.8em;
-    height: 0.8em;
-    margin-right: 0.6em;
+.app-menu-color-swatch {
     border-radius: 0.15em;
 }
 
 /* Setting row value (right side of the item, the label pushes it there). */
-.doom-menu-item-value {
+.app-menu-item-value {
     color: rgba(255, 255, 255, 0.9);
     font-size: 0.9em;
     letter-spacing: 0.1em;
 }
 
-/* Geometry only: the visual states come from doom-menu-button (whose later
-   rules the doubled class outweighs). Sized as a comfortable touch target,
-   still under the row height so lists keep their rhythm. */
-.doom-menu-button.doom-menu-item-delete {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2em;
-    height: 2em;
-    padding: 0;
+.app-menu-button.app-menu-item-delete {
     font-size: 0.85em;
     /* Single glyph: the button letter-spacing would trail it off-centre. */
     letter-spacing: 0;
     line-height: 1;
-}
-
-/* Shown but not selectable (an empty save slot on the load list). */
-.doom-menu-item-disabled {
-    opacity: 0.35;
-    cursor: default;
 }
 
 .doom-menu-empty {
@@ -206,7 +140,6 @@
 }
 
 /* --- Add form --- */
-
 .doom-menu-form {
     flex-shrink: 0;
     display: flex;
@@ -241,11 +174,10 @@
     display: none;
 }
 
-/* --- Buttons (same gradient as the loading bar) ---
-   Three shared states: dimmed at rest, full on hover or keyboard/gamepad
-   focus, brighter while pressed (the press feedback of MenuDom.addButton). */
-
-.doom-menu-button {
+/* Buttons, same gradient as the loading bar. Three shared states: dimmed at
+   rest, full on hover or keyboard/gamepad focus, brighter while pressed (the
+   press feedback of AppMenuDom.addButton). */
+.app-menu-button {
     background: linear-gradient(to right, #8E2A1E, #E74C3C);
     border: none;
     border-radius: 0.25em;
@@ -254,23 +186,20 @@
     font-size: 0.8em;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    padding: 0.8em 1.4em;
-    cursor: pointer;
     filter: brightness(70%);
 }
 
-.doom-menu-button:hover,
-.doom-menu-button-focus {
+.app-menu-button:hover,
+.app-menu-button-focus {
     filter: brightness(100%);
 }
 
-.doom-menu-button:disabled {
+.app-menu-button:disabled {
     filter: grayscale(1);
-    cursor: default;
 }
 
-.doom-menu-button-pressed,
-.doom-menu-button-pressed:hover {
+.app-menu-button-pressed,
+.app-menu-button-pressed:hover {
     filter: brightness(130%);
 }
 
@@ -282,7 +211,6 @@
 }
 
 /* --- Footer (version + webapp stats) --- */
-
 .doom-menu-footer {
     margin-top: 0.8em;
     color: rgba(255, 255, 255, 0.55);
@@ -291,42 +219,25 @@
     text-transform: uppercase;
 }
 
-/* --- Modal --- */
-
-.doom-menu-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.app-menu-overlay {
     background: rgba(0, 0, 0, 0.7);
 }
 
-.doom-menu-modal {
-    width: 48%;
+.app-menu-modal {
     background: rgba(20, 8, 6, 0.95);
     border: 0.06em solid rgba(192, 57, 43, 0.5);
     border-radius: 0.3em;
-    padding: 1.2em 1.4em;
     box-shadow: 0 0 2em rgba(192, 57, 43, 0.3);
 }
 
-.doom-menu-modal-message {
+.app-menu-modal-message {
     color: rgba(255, 255, 255, 0.85);
     font-size: 0.95em;
     letter-spacing: 0.1em;
-    text-align: center;
-    margin-bottom: 1.4em;
-    white-space: pre-line;
 }
 
-.doom-menu-modal-loading {
-    margin-bottom: 0;
+.app-menu-modal-loading {
     animation: doomMenuPulse 1.2s ease-in-out infinite;
-}
-
-.doom-menu-modal-wide {
-    width: 75%;
 }
 
 /* A tally with a players' table: room for four columns and their names. */
@@ -334,22 +245,15 @@
     width: 80%;
 }
 
-.doom-menu-modal-error {
+.app-menu-modal-error {
     color: rgba(231, 76, 60, 0.95);
 }
 
-.doom-menu-modal-detail {
+.app-menu-modal-detail {
     font-family: monospace;
     font-size: 0.7em;
     line-height: 1.4;
-    text-align: left;
     color: rgba(255, 255, 255, 0.55);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 9em;
-    overflow-y: auto;
-    margin-bottom: 1.4em;
-    padding: 0.6em 0.8em;
     background: rgba(0, 0, 0, 0.4);
     border-radius: 0.2em;
 }
@@ -361,12 +265,6 @@
     50% {
         opacity: 1;
     }
-}
-
-.doom-menu-modal-actions {
-    display: flex;
-    justify-content: center;
-    gap: 0.8em;
 }
 
 .doom-menu-tally {
@@ -450,26 +348,22 @@
     letter-spacing: 0.05em;
     line-height: 1.75;
     text-align: left;
-    /* The catalog keeps the paragraph breaks; each paragraph reflows. */
+    /* The catalog keeps the paragraph breaks;
+    each paragraph reflows. */
     white-space: pre-line;
 }
 
-.doom-menu-button-block {
-    width: 100%;
-}
-
-.doom-menu-button-secondary {
+.app-menu-button-secondary {
     background: none;
     border: 0.1em solid rgba(192, 57, 43, 0.5);
     color: rgba(255, 255, 255, 0.65);
 }
 
-.doom-menu-button-secondary:hover {
+.app-menu-button-secondary:hover {
     background: rgba(192, 57, 43, 0.15);
 }
 
 /* --- Corner buttons + options modal --- */
-
 /* Globe marking the language button as a switch: the autonym alone reads as a
    label, not as a command. Drawn rather than taken from the emoji font, whose
    glyph carries its own blue and ignores `color`: these strokes are
@@ -497,7 +391,7 @@
 
 /* Screen-level buttons (language, then help) in a row anchored to the
    top-right corner, so help keeps the exact spot it has always had. Placement
-   only: the metrics and the visual states come from doom-menu-button, and each
+   only: the metrics and the visual states come from app-menu-button, and each
    button keeps its natural width. */
 .doom-menu-corner {
     position: absolute;
@@ -506,42 +400,6 @@
     display: flex;
     flex-direction: row;
     gap: 0.4em;
-}
-
-/* Tall column layout: the body grows, the actions stick to the bottom right.
-   Capped height: a long settings list scrolls inside the body instead of
-   growing the modal past the screen. */
-.doom-menu-modal-options {
-    min-height: 60%;
-    max-height: 85%;
-    display: flex;
-    flex-direction: column;
-}
-
-.doom-menu-modal-options .doom-menu-modal-actions {
-    margin-top: auto;
-    justify-content: flex-end;
-}
-
-.doom-menu-modal-options .doom-menu-modal-actions-pair {
-    justify-content: center;
-}
-
-/* Page body: fills the modal and scrolls. A page built as a list keeps its own
-   internal scroll, so the body never overflows and shows no second bar. */
-.doom-menu-modal-options-body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 1em;
-}
-
-.doom-menu-modal-options-body .doom-menu-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    margin-bottom: 0;
 }
 
 /* Generic text line of a modal page (about, controls...). */
@@ -559,40 +417,31 @@
     padding-bottom: 1.2em;
 }
 
-.doom-menu-modal-heading {
+.app-menu-modal-heading {
     color: rgba(255, 255, 255, 0.9);
     font-size: 1.1em;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    text-align: left;
-    margin: 1.2em 0 0.6em;
 }
 
-.doom-menu-modal-link {
-    display: block;
+.app-menu-modal-link {
     color: #c0392b;
     font-size: 1em;
     letter-spacing: 0.08em;
-    text-align: left;
-    margin-bottom: 0.9em;
-    word-break: break-all;
 }
 
-.doom-menu-modal-link:hover {
+.app-menu-modal-link:hover {
     color: #e74c3c;
 }
 
-.doom-menu-modal-line {
+.app-menu-modal-line {
     color: rgba(255, 255, 255, 0.75);
     font-size: 1em;
     letter-spacing: 0.08em;
     line-height: 1.55;
-    text-align: left;
-    margin-bottom: 0.6em;
 }
 
 /* --- Status / error --- */
-
 .doom-menu-status {
     min-height: 1.4em;
     color: rgba(255, 255, 255, 0.45);
@@ -605,98 +454,32 @@
     color: #E74C3C;
 }
 
-.doom-menu .doom-menu-status + .doom-menu-button {
+.doom-menu .doom-menu-status + .app-menu-button {
     margin-top: 0.8em;
 }
 
-/* --- Text entry modal (on-screen keyboard) --- */
-
-/* Wide and pinned near the top: the keys must stay a comfortable touch target
-   on a phone, where the 16:9 band is only a few centimetres high. */
-.doom-menu-modal-text-entry {
-    width: 88%;
-    align-self: flex-start;
-    margin-top: 1.5em;
-}
-
-.doom-menu-text-field {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 1.6em;
-    margin-bottom: 1em;
-    padding: 0.35em 0.6em;
+.app-menu-text-field {
     background: rgba(0, 0, 0, 0.5);
     border: 0.06em solid rgba(192, 57, 43, 0.6);
     border-radius: 0.25em;
     color: #FFF;
     font-size: 1.4em;
     letter-spacing: 0.2em;
-    /* Inner spaces must keep their width: the value is what gets stored. */
-    white-space: pre;
 }
 
-/* End-of-text insertion point: a pure CSS blink, no timer to clean up. */
-.doom-menu-text-caret {
-    width: 0.08em;
-    height: 1.1em;
-    margin-left: 0.05em;
+.app-menu-text-caret {
     background: #E74C3C;
-    animation: doomMenuCaretBlink 1s step-end infinite;
 }
 
-@keyframes doomMenuCaretBlink {
-    50% {
-        opacity: 0;
-    }
-}
-
-.doom-menu-keyboard {
-    display: grid;
-    gap: 0.6em;
-}
-
-.doom-menu-button.doom-menu-key {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 2.4em;
-    padding: 0;
+.app-menu-button.app-menu-key {
     font-size: 1.35em;
     /* Single glyph: the button letter-spacing would trail it off-centre. */
     letter-spacing: 0;
     line-height: 1;
 }
 
-/* Icons drawn as masked SVG, like the language globe: they follow the key's
-   colour and states, and never depend on a system font. */
-.doom-menu-key-icon::before {
-    content: '';
-    width: 1.4em;
-    height: 1.4em;
-    background-color: currentColor;
-    -webkit-mask: var(--key-icon) center / contain no-repeat;
-    mask: var(--key-icon) center / contain no-repeat;
-}
-
-.doom-menu-key-space {
-    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v5h18v-5"/></svg>');
-}
-
-.doom-menu-key-erase {
-    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12v14H9l-7-7z"/><path d="M13 9l5 6M18 9l-5 6"/></svg>');
-}
-
-.doom-menu-key-cancel {
-    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>');
-}
-
-.doom-menu-key-validate {
-    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>');
-}
 
 /* --- Pairing (multiplayer): the code shown and the camera reading the other side's --- */
-
 .doom-menu-modal-pairing {
     width: 88%;
 }
@@ -789,7 +572,6 @@
 }
 
 /* --- Message over the running game (a turn waiting for a player) --- */
-
 .doom-game-notice {
     position: absolute;
     left: 50%;

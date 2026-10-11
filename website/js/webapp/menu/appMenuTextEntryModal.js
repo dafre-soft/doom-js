@@ -1,5 +1,5 @@
 /**
- * Text entry modal of a 'text' setting: the typed value with its blinking
+ * Text entry modal of a 'text' setting (AppSettings): the typed value with its blinking
  * caret, the on-screen keyboard, and the physical keyboard read through
  * `event.key` (the printed character, whatever the layout). The arrows and
  * the gamepad walk the on-screen keys, Enter and the gamepad validate button
@@ -9,9 +9,9 @@
  * empty; cancelling is always possible. The caret stays at the end: erasing
  * removes the last character.
  */
-class MenuTextEntryModal extends MenuModal {
+class AppMenuTextEntryModal extends AppMenuModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);
@@ -27,7 +27,7 @@ class MenuTextEntryModal extends MenuModal {
 
     /**
      * @param {string}           title
-     * @param {object}           definition - a 'text' DoomSettings definition
+     * @param {object}           definition - a 'text' AppSettings definition
      * @param {string}           value      - initial value
      * @param {function(string)} onValidate - receives the sanitized value
      * @param {function|null}    onCancel
@@ -38,14 +38,14 @@ class MenuTextEntryModal extends MenuModal {
         this._onValidate = onValidate;
         this._onCancel   = onCancel;
 
-        const {modal} = this._createShell(title, 'doom-menu-modal doom-menu-modal-text-entry', 'doom-menu-modal-message');
-        const field   = MenuDom.addElement(modal, 'div', 'doom-menu-text-field');
-        this._valueEl = MenuDom.addElement(field, 'span', 'doom-menu-text-value');
-        MenuDom.addElement(field, 'span', 'doom-menu-text-caret');
+        const {modal} = this._createShell(title, 'app-menu-modal app-menu-modal-text-entry', 'app-menu-modal-message');
+        const field   = AppMenuDom.addElement(modal, 'div', 'app-menu-text-field');
+        this._valueEl = AppMenuDom.addElement(field, 'span', 'app-menu-text-value');
+        AppMenuDom.addElement(field, 'span', 'app-menu-text-caret');
 
-        this._nav = new MenuListNavigation(() => this._eraseOrCancel(), () => !this._isTopOverlay())
+        this._nav = new AppMenuListNavigation(() => this._eraseOrCancel(), () => !this._isTopOverlay())
             .setOnStart(() => this._validate());
-        this._keyboard = new MenuVirtualKeyboard(definition, {
+        this._keyboard = new AppMenuVirtualKeyboard(definition, {
             onChar:     (char) => this._type(char),
             onErase:    () => this._erase(),
             onValidate: () => this._validate(),
@@ -70,12 +70,12 @@ class MenuTextEntryModal extends MenuModal {
 
     // Inner runs of spaces are collapsed as they are typed, a leading space refused.
     _type(char) {
-        const typed    = DoomSettings.normalizeTextChar(this._definition, char);
-        const isSpace  = (typed === MenuVirtualKeyboard.SPACE);
-        const blocked  = (isSpace && ((this._text === '') || this._text.endsWith(MenuVirtualKeyboard.SPACE)));
+        const typed    = AppSettings.normalizeTextChar(this._definition, char);
+        const isSpace  = (typed === AppMenuVirtualKeyboard.SPACE);
+        const blocked  = (isSpace && ((this._text === '') || this._text.endsWith(AppMenuVirtualKeyboard.SPACE)));
         const tooLong  = ((this._text.length + typed.length) > this._definition.maxLength);
         if ((typed === '') || blocked || tooLong) {
-            doomSound.playUi('menu/invalid');
+            AppMenuSound.play(AppMenuSound.INVALID);
             return;
         }
         this._text += typed;
@@ -97,9 +97,9 @@ class MenuTextEntryModal extends MenuModal {
     }
 
     _validate() {
-        const value = DoomSettings.sanitizeText(this._definition, this._text);
+        const value = AppSettings.sanitizeText(this._definition, this._text);
         if (value === '') {
-            doomSound.playUi('menu/invalid');
+            AppMenuSound.play(AppMenuSound.INVALID);
             return;
         }
         this.close();
@@ -115,7 +115,7 @@ class MenuTextEntryModal extends MenuModal {
 
     _render() {
         this._valueEl.textContent = this._text;
-        this._keyboard.setValidateEnabled(DoomSettings.sanitizeText(this._definition, this._text) !== '');
+        this._keyboard.setValidateEnabled(AppSettings.sanitizeText(this._definition, this._text) !== '');
     }
 
     // Arrows fall through to the navigation of the on-screen keys; browser

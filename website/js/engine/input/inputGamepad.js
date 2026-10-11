@@ -1,12 +1,8 @@
 /**
- * Physical gamepad input (Gamepad API). The W3C "standard" mapping is
- * preferred when several pads are connected.
- * The browser only exposes a gamepad after a button has been pressed on it
- * (anti-fingerprinting), so isAvailable() stays false until then.
- * Gamepad objects are snapshots: a fresh getGamepads() call is needed on
- * every read.
- * The dead zone only applies to the joysticks (they all drift around zero).
- * Buttons and stick axes can be rebound (setButtonMapping / setAxisMapping).
+ * The physical gamepad as an FPS controller: the game actions and stick slots
+ * of the engine laid over the page's AppInputGamepad, read through the same API as
+ * InputVirtualGamepad. The menus share the same AppInputGamepad, so they follow the
+ * player's stick and pause bindings.
  */
 class InputGamepad {
     // Default button of each game action, indices (0-based) of the DualSense
@@ -36,238 +32,93 @@ class InputGamepad {
         };
     }
 
-    // Analog triggers report a pressed flag at a light touch: a button counts
-    // as down past half of its travel.
-    static get PRESS_THRESHOLD() {
-        return 0.5;
-    }
-
-    static get DPAD_FIRST_BUTTON() {
-        return 12;
-    }
-
     constructor() {
-        this._index          = null;
-        this._deadZone       = 0.15;
-        this._buttonMapping  = InputGamepad.DEFAULT_MAPPING;
-        this._reboundActions = new Set();
-        this._axisMapping    = InputGamepad.DEFAULT_AXIS_MAPPING;
+        this._pad = new AppInputGamepad()
+            .setActionDefaults(InputGamepad.DEFAULT_MAPPING, InputGamepad.DEFAULT_AXIS_MAPPING)
+            .setMenuBindings({stickX: 'moveX', stickY: 'moveY', start: 'pause'});
+    }
+
+    getDevice() {
+        return this._pad;
+    }
+
+    isAvailable() {
+        return this._pad.isAvailable();
+    }
+
+    getName() {
+        return this._pad.getName();
     }
 
     /**
-     * Optional per-action rebinding: one button index per given action (null
-     * unmaps it). Unknown actions are ignored, missing ones keep their defaults.
-     *
-     * @param {object} mapping - {action: int|null}
+     * @param {object} mapping - {action: int|null}, see DEFAULT_MAPPING
      */
     setButtonMapping(mapping) {
-        this._buttonMapping  = Inputs.mergeMapping(InputGamepad.DEFAULT_MAPPING, mapping);
-        this._reboundActions = new Set(Object.keys(mapping ?? {}));
+        this._pad.setButtonMapping(mapping);
 
         return this;
     }
 
     /**
-     * Optional stick axis rebinding: {slot: {index, inverted}} (see
-     * DEFAULT_AXIS_MAPPING), an index null unmapping the slot. Unknown slots
-     * are ignored, missing ones keep their defaults.
-     *
-     * @param {object} mapping
+     * @param {object} mapping - {slot: {index, inverted}}, see DEFAULT_AXIS_MAPPING
      */
     setAxisMapping(mapping) {
-        this._axisMapping = Inputs.mergeMapping(InputGamepad.DEFAULT_AXIS_MAPPING, mapping);
+        this._pad.setAxisMapping(mapping);
 
         return this;
-    }
-
-    readRawButtons() {
-        const pad = this._getPad();
-
-        return ((pad !== null) ? Array.from(pad.buttons, (button) => this._isDown(button)) : []);
-    }
-
-    readRawAxes() {
-        const pad = this._getPad();
-
-        return ((pad !== null) ? Array.from(pad.axes) : []);
-    }
-
-    /**
-     * Scans the connected gamepads and keeps one as active, preferring the
-     * W3C "standard" mapping, with a fallback on the first connected pad.
-     * @returns {boolean}
-     */
-    isAvailable() {
-        if (!navigator.getGamepads) {
-            this._index = null;
-            return false;
-        }
-        const pads   = navigator.getGamepads();
-        let index    = null;
-        let fallback = null;
-        for (let i = 0; i < pads.length; i++) {
-            if ((pads[i] === null) || !pads[i].connected) {
-                continue;
-            }
-            if (pads[i].mapping === 'standard') {
-                index = i;
-                break;
-            }
-            if (fallback === null) {
-                fallback = i;
-            }
-        }
-        if (index === null) {
-            index = fallback;
-        }
-        this._index = index;
-        return (this._index !== null);
-    }
-
-    // Human-readable name of the active pad (Gamepad.id), null without one.
-    getName() {
-        const pad = this._getPad();
-
-        return ((pad !== null) ? pad.id : null);
     }
 
     readJoy1X() {
-        return this._axis('moveX');
+        return this._pad.readSlot('moveX');
     }
 
     // Stick up is -1 in hardware, forward is +1 in the engine convention
     readJoy1Y() {
-        return -this._axis('moveY');
+        return -this._pad.readSlot('moveY');
     }
 
     readJoy2X() {
-        return this._axis('lookX');
+        return this._pad.readSlot('lookX');
     }
 
     // Stick down is +1, same direction as a mouse moving down
     readJoy2Y() {
-        return this._axis('lookY');
+        return this._pad.readSlot('lookY');
     }
 
     readButtonCrouch() {
-        return this._readAction('crouch');
+        return this._pad.readAction('crouch');
     }
 
     readButtonJump() {
-        return this._readAction('jump');
+        return this._pad.readAction('jump');
     }
 
     readButtonAction() {
-        return this._readAction('action');
+        return this._pad.readAction('action');
     }
 
     readButtonFire() {
-        return this._readAction('fire');
+        return this._pad.readAction('fire');
     }
 
     readButtonPause() {
-        return this._readAction('pause');
+        return this._pad.readAction('pause');
     }
 
     readButtonRun() {
-        return this._readAction('run');
+        return this._pad.readAction('run');
     }
 
     readButtonWeaponPrev() {
-        return this._readAction('weaponPrev');
+        return this._pad.readAction('weaponPrev');
     }
 
     readButtonWeaponNext() {
-        return this._readAction('weaponNext');
+        return this._pad.readAction('weaponNext');
     }
 
     readButtonMap() {
-        return this._readAction('map');
-    }
-
-    // D-pad up/down, only trusted on the standard mapping (buttons 12/13).
-    // Raw layouts expose the d-pad as a hat axis on other slots, where 12/13
-    // may be unrelated physical buttons — there, the caller falls back on the
-    // left stick.
-    readDpadUp() {
-        return (this._isStandardMapping() && this._button(12));
-    }
-
-    readDpadDown() {
-        return (this._isStandardMapping() && this._button(13));
-    }
-
-    readDpadLeft() {
-        return (this._isStandardMapping() && this._button(14));
-    }
-
-    readDpadRight() {
-        return (this._isStandardMapping() && this._button(15));
-    }
-
-    // Generic UI navigation: validate on face button 0 (✕ on a DualSense),
-    // back on face button 1 (○), used by the DOM menus.
-    readButtonValidate() {
-        return this._button(0);
-    }
-
-    readButtonBack() {
-        return this._button(1);
-    }
-
-    // --- Internal ---
-
-    // A default on the d-pad is only trusted on the standard mapping, where
-    // 12-15 are the d-pad (see readDpadUp); a button the player bound is.
-    _readAction(action) {
-        const index = this._buttonMapping[action];
-        if ((index === null) || (index === undefined)) {
-            return false;
-        }
-        if (!this._reboundActions.has(action) && (index >= InputGamepad.DPAD_FIRST_BUTTON) && !this._isStandardMapping()) {
-            return false;
-        }
-
-        return this._button(index);
-    }
-
-    _isStandardMapping() {
-        const pad = this._getPad();
-
-        return ((pad !== null) && (pad.mapping === 'standard'));
-    }
-
-    _getPad() {
-        if ((this._index === null) || !navigator.getGamepads) {
-            return null;
-        }
-        const pad = navigator.getGamepads()[this._index];
-        if ((pad === null) || (pad === undefined) || !pad.connected) {
-            return null;
-        }
-        return pad;
-    }
-
-    _axis(slot) {
-        const pad   = this._getPad();
-        const index = this._axisMapping[slot].index;
-        if ((pad === null) || (index === null) || (pad.axes.length <= index)) {
-            return 0;
-        }
-        const value  = (this._axisMapping[slot].inverted ? -pad.axes[index] : pad.axes[index]);
-        const scaled = Inputs.rescaleDeadZone(Math.abs(value), this._deadZone);
-        return ((value < 0) ? -scaled : scaled);
-    }
-
-    _button(index) {
-        const pad = this._getPad();
-        if ((pad === null) || (pad.buttons.length <= index)) {
-            return false;
-        }
-        return this._isDown(pad.buttons[index]);
-    }
-
-    _isDown(button) {
-        return (button.value > InputGamepad.PRESS_THRESHOLD);
+        return this._pad.readAction('map');
     }
 }

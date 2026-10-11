@@ -281,7 +281,7 @@ class DoomPresentation {
             return this;
         }
         if (this._noticeEl === null) {
-            this._noticeEl = MenuDom.addElement(this._screen.getDisplay(), 'div', 'doom-game-notice');
+            this._noticeEl = AppMenuDom.addElement(this._screen.getDisplay(), 'div', 'doom-game-notice');
         }
         this._noticeEl.textContent   = (text ?? '');
         this._noticeEl.style.display = ((text !== null) ? '' : 'none');

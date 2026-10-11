@@ -8,7 +8,7 @@
 class MultiplayerScreen extends AbstractMenuScreen {
     /**
      * @param {MenuNavigator} navigator
-     * @param {MenuDisplay}   display
+     * @param {AppMenuDisplay}   display
      */
     constructor(navigator, display) {
         super(navigator, display);

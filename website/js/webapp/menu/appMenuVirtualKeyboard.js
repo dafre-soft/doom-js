@@ -1,5 +1,5 @@
 /**
- * On-screen keyboard of a 'text' setting: one key per character of its charset,
+ * On-screen keyboard of a 'text' setting (AppSettings): one key per character of its charset,
  * a wide space key when the charset has one, erase, cancel and validate. No
  * browser <input>: a native field pops the OS keyboard on mobile (viewport
  * resize, fullscreen loss) and cannot be driven by a gamepad.
@@ -9,7 +9,7 @@
  * of its own. Every key keeps its grid slot (row, column, span), the grid the
  * list navigation walks.
  */
-class MenuVirtualKeyboard {
+class AppMenuVirtualKeyboard {
     static get COLUMNS() {
         return 10;
     }
@@ -60,7 +60,7 @@ class MenuVirtualKeyboard {
     }
 
     /**
-     * @param {object} definition - a 'text' DoomSettings definition
+     * @param {object} definition - a 'text' AppSettings definition
      * @param {{onChar: function(string), onErase: function, onValidate: function, onCancel: function}} handlers
      */
     constructor(definition, handlers) {
@@ -72,11 +72,11 @@ class MenuVirtualKeyboard {
 
     /**
      * @param {HTMLElement}        parent
-     * @param {MenuListNavigation} nav - every key becomes one of its entries, in reading order
+     * @param {AppMenuListNavigation} nav - every key becomes one of its entries, in reading order
      */
     build(parent, nav) {
-        const grid = MenuDom.addElement(parent, 'div', 'doom-menu-keyboard');
-        grid.style.gridTemplateColumns = 'repeat(' + MenuVirtualKeyboard.COLUMNS + ', 1fr)';
+        const grid = AppMenuDom.addElement(parent, 'div', 'app-menu-keyboard');
+        grid.style.gridTemplateColumns = 'repeat(' + AppMenuVirtualKeyboard.COLUMNS + ', 1fr)';
         for (const row of this._layout()) {
             for (const slot of row) {
                 this._addKey(grid, slot);
@@ -105,51 +105,51 @@ class MenuVirtualKeyboard {
 
     // Character rows first, erase closing the last of them, then the command row.
     _layout() {
-        const columns = MenuVirtualKeyboard.COLUMNS;
+        const columns = AppMenuVirtualKeyboard.COLUMNS;
         const rows    = this._characterRows().map((chars) => chars.map((char) => ({kind: 'char', char: char, span: 1})));
         const free    = columns - ((rows.length > 0) ? rows[rows.length - 1].length : columns);
-        if (free < MenuVirtualKeyboard.ERASE_MIN_SPAN) {
+        if (free < AppMenuVirtualKeyboard.ERASE_MIN_SPAN) {
             rows.push([{kind: 'erase', span: columns}]);
         } else {
             rows[rows.length - 1].push({kind: 'erase', span: free});
         }
         rows.push(this._commandRow());
 
-        return rows.map((row, rowIndex) => MenuVirtualKeyboard._placed(row, rowIndex));
+        return rows.map((row, rowIndex) => AppMenuVirtualKeyboard._placed(row, rowIndex));
     }
 
     // The layout rows reduced to the charset, then whatever the charset holds
     // beyond the layout, in rows of the keyboard width.
     _characterRows() {
-        const charset = Array.from(this._definition.charset).filter((char) => (char !== MenuVirtualKeyboard.SPACE));
-        const rows    = MenuVirtualKeyboard._layoutRows()
+        const charset = Array.from(this._definition.charset).filter((char) => (char !== AppMenuVirtualKeyboard.SPACE));
+        const rows    = AppMenuVirtualKeyboard._layoutRows()
             .map((row) => Array.from(row).filter((char) => charset.includes(char)))
             .filter((row) => (row.length > 0));
         const placed  = rows.flat();
         const extra   = charset.filter((char) => !placed.includes(char));
-        for (let start = 0; start < extra.length; start += MenuVirtualKeyboard.COLUMNS) {
-            rows.push(extra.slice(start, start + MenuVirtualKeyboard.COLUMNS));
+        for (let start = 0; start < extra.length; start += AppMenuVirtualKeyboard.COLUMNS) {
+            rows.push(extra.slice(start, start + AppMenuVirtualKeyboard.COLUMNS));
         }
 
         return rows;
     }
 
     static _layoutRows() {
-        const code = (MenuVirtualKeyboard.LAYOUT_BY_LANGUAGE[appTranslator.getLanguage()] ?? MenuVirtualKeyboard.DEFAULT_LAYOUT);
+        const code = (AppMenuVirtualKeyboard.LAYOUT_BY_LANGUAGE[appTranslator.getLanguage()] ?? AppMenuVirtualKeyboard.DEFAULT_LAYOUT);
 
-        return MenuVirtualKeyboard.LAYOUTS[code];
+        return AppMenuVirtualKeyboard.LAYOUTS[code];
     }
 
     _commandRow() {
-        const columns = MenuVirtualKeyboard.COLUMNS;
-        if (!this._definition.charset.includes(MenuVirtualKeyboard.SPACE)) {
+        const columns = AppMenuVirtualKeyboard.COLUMNS;
+        if (!this._definition.charset.includes(AppMenuVirtualKeyboard.SPACE)) {
             return [{kind: 'cancel', span: columns / 2}, {kind: 'validate', span: columns / 2}];
         }
-        const side = (columns - MenuVirtualKeyboard.SPACE_SPAN) / 2;
+        const side = (columns - AppMenuVirtualKeyboard.SPACE_SPAN) / 2;
 
         return [
             {kind: 'cancel', span: Math.floor(side)},
-            {kind: 'char', char: MenuVirtualKeyboard.SPACE, span: MenuVirtualKeyboard.SPACE_SPAN},
+            {kind: 'char', char: AppMenuVirtualKeyboard.SPACE, span: AppMenuVirtualKeyboard.SPACE_SPAN},
             {kind: 'validate', span: Math.ceil(side)}
         ];
     }
@@ -166,14 +166,14 @@ class MenuVirtualKeyboard {
     }
 
     _addKey(grid, slot) {
-        const isIcon = ((slot.kind !== 'char') || (slot.char === MenuVirtualKeyboard.SPACE));
+        const isIcon = ((slot.kind !== 'char') || (slot.char === AppMenuVirtualKeyboard.SPACE));
         const label  = (isIcon ? '' : slot.char);
         const kind   = (((slot.kind === 'char') && isIcon) ? 'space' : slot.kind);
-        const el     = MenuDom.addButton(grid, 'doom-menu-button doom-menu-key' + (isIcon ? ' doom-menu-key-icon doom-menu-key-' + kind : ''),
-            label, () => this._activate(slot), MenuVirtualKeyboard.PRESS_FEEDBACK_MS);
+        const el     = AppMenuDom.addButton(grid, 'app-menu-button app-menu-key' + (isIcon ? ' app-menu-key-icon app-menu-key-' + kind : ''),
+            label, () => this._activate(slot), AppMenuVirtualKeyboard.PRESS_FEEDBACK_MS);
         el.style.gridColumn = 'span ' + slot.span;
         if (isIcon) {
-            const name = appTranslator.get(MenuVirtualKeyboard.ICON_LABEL_CODES[kind]);
+            const name = appTranslator.get(AppMenuVirtualKeyboard.ICON_LABEL_CODES[kind]);
             el.setAttribute('aria-label', name);
             el.title = name;
         }

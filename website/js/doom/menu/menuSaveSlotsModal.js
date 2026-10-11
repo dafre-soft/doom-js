@@ -5,7 +5,7 @@
  * inert to load. After a save, the owner's onSaved callback takes over (the
  * pause resumes the game); without one, the list refreshes in place.
  */
-class MenuSaveSlotsModal extends AbstractMenuListModal {
+class MenuSaveSlotsModal extends AppMenuAbstractListModal {
     static MODE_LOAD = 'load';
     static MODE_SAVE = 'save';
 
@@ -13,7 +13,7 @@ class MenuSaveSlotsModal extends AbstractMenuListModal {
     static SAVING_DISPLAY_MS = 1000;
 
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);
@@ -91,7 +91,7 @@ class MenuSaveSlotsModal extends AbstractMenuListModal {
         this._bodyEl.innerHTML = '';
         this._nav.clear();
 
-        const list = MenuDom.addElement(this._bodyEl, 'div', 'doom-menu-list');
+        const list = AppMenuDom.addElement(this._bodyEl, 'div', 'app-menu-list');
         for (let slot = 1; slot <= DoomSaveStore.MAX_SLOTS; slot++) {
             this._buildSlotRow(list, slot, (this._slots[slot] ?? null));
         }
@@ -107,7 +107,7 @@ class MenuSaveSlotsModal extends AbstractMenuListModal {
                 this._nav.addItemIn(listEl, emptyLabel, () => this._saveToSlot(slot));
                 return;
             }
-            MenuDom.addListItem(listEl, emptyLabel).classList.add('doom-menu-item-disabled');
+            AppMenuDom.addListItem(listEl, emptyLabel).classList.add('app-menu-item-disabled');
             return;
         }
 
@@ -116,9 +116,9 @@ class MenuSaveSlotsModal extends AbstractMenuListModal {
             ? () => this._confirmOverwrite(slot)
             : () => this._loadSlot(meta));
         const item = this._nav.addItemIn(listEl, label, action);
-        MenuDom.addText(item, 'doom-menu-item-value', MenuDom.formatDate(meta.savedAt, true));
+        AppMenuDom.addText(item, 'app-menu-item-value', AppMenuDom.formatDate(meta.savedAt, true));
 
-        MenuDom.addDeleteButton(item, appTranslator.get('menu.save.delete'), () => {
+        AppMenuDom.addDeleteButton(item, appTranslator.get('menu.save.delete'), () => {
             this._confirmDelete(slot);
         });
     }

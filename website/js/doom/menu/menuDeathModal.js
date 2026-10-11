@@ -7,7 +7,7 @@
  */
 class MenuDeathModal extends AbstractGameMenuModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);

@@ -8,7 +8,7 @@
  */
 class MenuMultiplayerModal extends AbstractGameMenuModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      * @param {object}      sessionContext - see MenuPauseModal.setSessionContext
      */
     constructor(display, sessionContext) {
@@ -30,7 +30,7 @@ class MenuMultiplayerModal extends AbstractGameMenuModal {
     // feedback keeps this modal on top while the game reads the pause toggle.
     show() {
         const {bodyEl} = this._openShell(appTranslator.get('multiplayer.pause.menu'), appTranslator.get('menu.back'));
-        this._addEntries(MenuDom.addElement(bodyEl, 'div', 'doom-menu-list'));
+        this._addEntries(AppMenuDom.addElement(bodyEl, 'div', 'app-menu-list'));
         this._nav.selectFirst();
 
         return this;

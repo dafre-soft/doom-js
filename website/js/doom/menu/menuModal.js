@@ -1,112 +1,8 @@
 /**
- * Confirmation modal displayed above the menu screens, in the Spipu-Doom style.
+ * The doom modals: the confirmation, information, loading and error ones of
+ * AppMenuModal, plus the end-of-level tally and the finale texts.
  */
-class MenuModal {
-    /**
-     * @param {MenuDisplay} display
-     */
-    constructor(display) {
-        this._display = display;
-        this._overlay = null;
-        this._nav     = null;
-    }
-
-    /**
-     * @param {string}      message
-     * @param {function}    onConfirm
-     * @param {string|null} confirmLabel
-     * @param {string|null} cancelLabel
-     */
-    confirm(message, onConfirm, confirmLabel = null, cancelLabel = null) {
-        doomSound.playUi('menu/prompt');
-        confirmLabel = (confirmLabel ?? appTranslator.get('menu.confirm'));
-        cancelLabel  = (cancelLabel ?? appTranslator.get('menu.cancel'));
-
-        const {modal} = this._createShell(message, 'doom-menu-modal', 'doom-menu-modal-message');
-
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-
-        const cancelButton = MenuDom.addButton(actions, 'doom-menu-button doom-menu-button-secondary', cancelLabel, () => {
-            this.close();
-        });
-
-        const confirmButton = MenuDom.addButton(actions, 'doom-menu-button', confirmLabel, () => {
-            this.close();
-            onConfirm();
-        });
-
-        // Confirm preselected (the user just asked for the action); every
-        // back input plays the cancel button.
-        this._attachButtonsNav([cancelButton, confirmButton], cancelButton, 1);
-        this._dismissOnOverlayClick(() => this.close());
-
-        return this;
-    }
-
-    /**
-     * Loading modal: pulsing message, without buttons and not closable by
-     * clicking. Closed programmatically via close().
-     *
-     * @param {string} message
-     */
-    showLoading(message) {
-        this._createShell(message, 'doom-menu-modal',
-            'doom-menu-modal-message doom-menu-modal-loading');
-
-        return this;
-    }
-
-    /**
-     * Information modal: a message and a single "Back" button (e.g. saving is
-     * refused while the player is dead). The overlay click dismisses it too.
-     *
-     * @param {string}        message
-     * @param {function|null} onClose
-     */
-    info(message, onClose = null) {
-        const {modal} = this._createShell(message, 'doom-menu-modal', 'doom-menu-modal-message');
-
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-        const dismiss = () => {
-            this.close();
-            if (onClose !== null) {
-                onClose();
-            }
-        };
-
-        const button = MenuDom.addButton(actions, 'doom-menu-button', appTranslator.get('menu.back'), dismiss);
-        this._attachButtonsNav([button], button, 0);
-        this._dismissOnOverlayClick(dismiss);
-
-        return this;
-    }
-
-    /**
-     * Error modal: a prominent centred message plus an optional technical detail
-     * (e.g. the top of a stack trace) and a single dismiss button.
-     *
-     * @param {string}      message
-     * @param {string|null} detail
-     * @param {function}    onClose
-     */
-    showError(message, detail, onClose) {
-        const {modal} = this._createShell(message, 'doom-menu-modal doom-menu-modal-wide', 'doom-menu-modal-message doom-menu-modal-error');
-
-        if (detail) {
-            MenuDom.addText(modal, 'doom-menu-modal-detail', detail);
-        }
-
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-
-        const button = MenuDom.addButton(actions, 'doom-menu-button', appTranslator.get('menu.close'), () => {
-            this.close();
-            onClose();
-        });
-        this._attachButtonsNav([button], button, 0);
-
-        return this;
-    }
-
+class MenuModal extends AppMenuModal {
     /**
      * End-of-level tally: the level's closing sentence as a title, one line per
      * score (label on the left, value on the right) and a single full-width
@@ -123,14 +19,14 @@ class MenuModal {
      * @param {object|null}   table  - {columns: [{name, color|null}], rows: [{label, values}]}, null for none
      */
     tally(title, lines, label, action, table = null) {
-        const shellClass = ((table !== null) ? 'doom-menu-modal doom-menu-modal-tally' : 'doom-menu-modal');
-        const {modal}    = this._createShell(title, shellClass, 'doom-menu-modal-message');
+        const shellClass = ((table !== null) ? 'app-menu-modal doom-menu-modal-tally' : 'app-menu-modal');
+        const {modal}    = this._createShell(title, shellClass, 'app-menu-modal-message');
 
-        const body = MenuDom.addElement(modal, 'div', 'doom-menu-tally');
+        const body = AppMenuDom.addElement(modal, 'div', 'doom-menu-tally');
         for (const line of lines) {
-            const row = MenuDom.addElement(body, 'div', 'doom-menu-tally-line');
-            MenuDom.addText(row, 'doom-menu-tally-label', line.label);
-            MenuDom.addText(row, 'doom-menu-tally-value', line.value);
+            const row = AppMenuDom.addElement(body, 'div', 'doom-menu-tally-line');
+            AppMenuDom.addText(row, 'doom-menu-tally-label', line.label);
+            AppMenuDom.addText(row, 'doom-menu-tally-value', line.value);
         }
         if (table !== null) {
             this._addTallyTable(body, table);
@@ -152,48 +48,32 @@ class MenuModal {
      * @param {function|null} action
      */
     finale(text, label, action) {
-        const {modal} = this._createShell(text, 'doom-menu-modal doom-menu-modal-finale', 'doom-menu-finale');
+        const {modal} = this._createShell(text, 'app-menu-modal doom-menu-modal-finale', 'doom-menu-finale');
 
         this._addActionButton(modal, label, action);
 
         return this;
     }
 
-    close() {
-        this._removeShell();
-
-        return this;
-    }
-
     // --- Internal ---
 
-    _removeShell() {
-        if (this._nav !== null) {
-            this._nav.detach().clear();
-        }
-        if (this._overlay !== null) {
-            this._overlay.remove();
-            this._overlay = null;
-        }
-    }
-
     _addTallyTable(body, table) {
-        const grid = MenuDom.addElement(body, 'div', 'doom-menu-tally-table');
+        const grid = AppMenuDom.addElement(body, 'div', 'doom-menu-tally-table');
         grid.style.gridTemplateColumns = 'auto repeat(' + table.columns.length + ', minmax(0, 1fr))';
-        MenuDom.addElement(grid, 'div', 'doom-menu-tally-label');
+        AppMenuDom.addElement(grid, 'div', 'doom-menu-tally-label');
         for (const column of table.columns) {
-            const header = MenuDom.addText(grid, 'doom-menu-tally-player', column.name);
+            const header = AppMenuDom.addText(grid, 'doom-menu-tally-player', column.name);
             if (column.color !== null) {
-                MenuDom.addColorSwatch(header, column.color);
+                AppMenuDom.addColorSwatch(header, column.color);
             }
         }
         for (const row of table.rows) {
-            const label = MenuDom.addText(grid, 'doom-menu-tally-label', row.label);
+            const label = AppMenuDom.addText(grid, 'doom-menu-tally-label', row.label);
             if ((row.color ?? null) !== null) {
-                MenuDom.addColorSwatch(label, row.color);
+                AppMenuDom.addColorSwatch(label, row.color);
             }
             for (const value of row.values) {
-                MenuDom.addText(grid, 'doom-menu-tally-value', value);
+                AppMenuDom.addText(grid, 'doom-menu-tally-value', value);
             }
         }
     }
@@ -203,53 +83,11 @@ class MenuModal {
         if (label === null) {
             return;
         }
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-        const button = MenuDom.addButton(actions, 'doom-menu-button doom-menu-button-block', label, () => {
+        const actions = AppMenuDom.addElement(modal, 'div', 'app-menu-modal-actions');
+        const button = AppMenuDom.addButton(actions, 'app-menu-button app-menu-button-block', label, () => {
             this.close();
             action();
         });
         this._attachButtonsNav([button], button, 0);
-    }
-
-    // Overlays stack in the display container: only the top-most one may
-    // react to inputs (a nested confirmation suspends the modal beneath it).
-    _isTopOverlay() {
-        if (this._overlay === null) {
-            return false;
-        }
-
-        return MenuDom.isTopOverlay(this._display.getContainer(), this._overlay);
-    }
-
-    _dismissOnOverlayClick(action) {
-        this._overlay.addEventListener('click', (event) => {
-            if (event.target === this._overlay) {
-                action();
-            }
-        });
-    }
-
-    // Horizontal navigation over a buttons row (Left/Right + hover select,
-    // Enter/pad-validate clicks, every back input plays backButton).
-    _attachButtonsNav(buttons, backButton, selectedIndex) {
-        this._nav = new MenuListNavigation(() => backButton.click(), () => !this._isTopOverlay())
-            .setEscapeAsBack(true)
-            .setHorizontal(true);
-        for (const button of buttons) {
-            this._nav.addButtonItem(button);
-        }
-        this._nav.attach().selectIndex(selectedIndex);
-    }
-
-    // A re-render replaces the shell without closing the modal: its stacked
-    // children and its owner's close hook are left alone.
-    _createShell(message, modalClass, messageClass) {
-        this._removeShell();
-
-        this._overlay = MenuDom.addElement(this._display.getContainer(), 'div', 'doom-menu-overlay');
-        const modal = MenuDom.addElement(this._overlay, 'div', modalClass);
-        const messageEl = MenuDom.addText(modal, messageClass, message);
-
-        return {modal: modal, messageEl: messageEl};
     }
 }

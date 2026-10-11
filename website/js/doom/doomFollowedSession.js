@@ -70,7 +70,7 @@ class DoomFollowedSession {
         const game = this._game;
         game.setTransitioning(true);
         game.closeGameMenu();
-        const display = new MenuDisplay('screen').init(true);
+        const display = new AppMenuDisplay('screen').init(true);
         const modal   = new MenuModal(display).showLoading(appTranslator.get('game.level.loading', {level: level.levelCode}));
         try {
             await this.join(game.getWadFile(), null, level);

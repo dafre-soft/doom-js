@@ -1,16 +1,16 @@
 /**
- * Base class of the menu screens, displayed inside the MenuDisplay virtual screen.
+ * Base class of the menu screens, displayed inside the AppMenuDisplay virtual screen.
  *
  * Every screen shares the same skeleton (title, panel, subtitle, selectable
  * list, status, back button) and the same selection model on its list items,
- * provided by MenuListNavigation (mouse hover, keyboard and gamepad all drive
+ * provided by AppMenuListNavigation (mouse hover, keyboard and gamepad all drive
  * one single highlighted entry).
  */
 
 class AbstractMenuScreen {
     /**
      * @param {MenuNavigator} navigator
-     * @param {MenuDisplay}   display
+     * @param {AppMenuDisplay}   display
      */
     constructor(navigator, display) {
         this._navigator   = navigator;
@@ -19,7 +19,7 @@ class AbstractMenuScreen {
         this._statusEl    = null;
         this._footerEl    = null;
         this._footerTimer = null;
-        this._nav         = new MenuListNavigation(() => this._onBack(), () => this._navBlocked())
+        this._nav         = new AppMenuListNavigation(() => this._onBack(), () => this._navBlocked())
             .setEscapeAsBack(true);
     }
 
@@ -74,7 +74,7 @@ class AbstractMenuScreen {
             return true;
         }
 
-        return MenuDom.hasOverlay(displayContainer);
+        return AppMenuDom.hasOverlay(displayContainer);
     }
 
     // --- Shared skeleton ---
@@ -85,9 +85,9 @@ class AbstractMenuScreen {
         this._addTitle('Spipu-Doom');
 
         const panel      = this._addElement('div', 'doom-menu-panel');
-        const subtitleEl = MenuDom.addText(panel, 'doom-menu-subtitle', subtitleText);
+        const subtitleEl = AppMenuDom.addText(panel, 'app-menu-subtitle', subtitleText);
 
-        return {panel: panel, subtitleEl: subtitleEl, listEl: this._addElement('div', 'doom-menu-list', panel)};
+        return {panel: panel, subtitleEl: subtitleEl, listEl: this._addElement('div', 'app-menu-list', panel)};
     }
 
     _buildWadPanel(wadMeta, subtitleLabel) {
@@ -124,11 +124,11 @@ class AbstractMenuScreen {
 
     // Secondary line of a list item (size, date, skill number...).
     _addListItemInfos(item, text) {
-        return MenuDom.addText(item, 'doom-menu-item-infos', text);
+        return AppMenuDom.addText(item, 'app-menu-item-infos', text);
     }
 
     _addListEmpty(listEl, text) {
-        return MenuDom.addText(listEl, 'doom-menu-empty', text);
+        return AppMenuDom.addText(listEl, 'doom-menu-empty', text);
     }
 
     _openAbout() {
@@ -162,18 +162,18 @@ class AbstractMenuScreen {
             + ' — © ' + new Date().getFullYear() + ' Spipu';
     }
 
-    // --- DOM helpers (MenuDom wrappers defaulting to the screen container) ---
+    // --- DOM helpers (AppMenuDom wrappers defaulting to the screen container) ---
 
     _addElement(tagName, className, parent = null) {
-        return MenuDom.addElement(parent ?? this._container, tagName, className);
+        return AppMenuDom.addElement(parent ?? this._container, tagName, className);
     }
 
     _addTitle(text, parent = null) {
-        return MenuDom.addText(parent ?? this._container, 'doom-menu-title', text);
+        return AppMenuDom.addText(parent ?? this._container, 'doom-menu-title', text);
     }
 
     _addButton(label, onClick, parent = null) {
-        return MenuDom.addButton(parent ?? this._container, 'doom-menu-button', label, onClick);
+        return AppMenuDom.addButton(parent ?? this._container, 'app-menu-button', label, onClick);
     }
 
     _confirm(message, onConfirm) {

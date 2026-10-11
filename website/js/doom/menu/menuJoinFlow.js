@@ -7,7 +7,7 @@
 class MenuJoinFlow {
     /**
      * @param {MenuNavigator}       navigator
-     * @param {MenuDisplay}         display
+     * @param {AppMenuDisplay}         display
      * @param {DoomNetLinks}        links
      * @param {DoomNetAvailability} availability
      */

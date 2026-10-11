@@ -4,7 +4,7 @@
  */
 class MenuNavigator {
     constructor() {
-        this._display  = new MenuDisplay('screen');
+        this._display  = new AppMenuDisplay('screen');
         this._storage  = new WadStorage();
         this._registry = new WadRegistry(this._storage);
 

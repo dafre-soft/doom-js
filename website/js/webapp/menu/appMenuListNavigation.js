@@ -10,7 +10,7 @@
  * and a bottom button below it join the vertical flow. The owner provides the
  * back action and the blocked state (its own modality).
  */
-class MenuListNavigation {
+class AppMenuListNavigation {
     static get PAD_POLL_MS() {
         return 50;
     }
@@ -54,7 +54,7 @@ class MenuListNavigation {
         this._keyDownListener   = this._onKeyDown.bind(this);
         this._mouseMoveListener = this._onMouseMove.bind(this);
         this._mouseArmed        = false;
-        this._pad               = new Inputs().getGamepad();
+        this._pad               = new AppInputGamepad();
         this._padTimer          = null;
         this._padSeen           = false;
         this._padState          = {validate: false, back: false, start: false};
@@ -79,7 +79,7 @@ class MenuListNavigation {
         return this;
     }
 
-    // Gamepad Start (the pause button of the game), for a list whose
+    // Gamepad Start (see AppInputGamepad.readMenuStart), for a list whose
     // validation is not its highlighted entry (a text entry).
     setOnStart(callback) {
         this._onStart = callback;
@@ -87,9 +87,9 @@ class MenuListNavigation {
         return this;
     }
 
-    // Escape joins Backspace on the back action — only in the menu contexts:
-    // over a running game the game loop owns the Escape key (pause toggle),
-    // and a second handler would race it.
+    // Escape joins Backspace on the back action — off by default: over a
+    // running game, the game loop may own the Escape key (pause toggle), and
+    // a second handler would race it.
     setEscapeAsBack(flag) {
         this._escapeAsBack = (flag === true);
 
@@ -106,7 +106,7 @@ class MenuListNavigation {
         if (this._padTimer === null) {
             this._padTimer = setInterval(() => {
                 this._readPad();
-            }, MenuListNavigation.PAD_POLL_MS);
+            }, AppMenuListNavigation.PAD_POLL_MS);
         }
 
         return this;
@@ -165,7 +165,7 @@ class MenuListNavigation {
     }
 
     addItemIn(listEl, labelText, onActivate, onAdjust = null) {
-        const item = MenuDom.addListItem(listEl, labelText);
+        const item = AppMenuDom.addListItem(listEl, labelText);
         this.addItem(item, onActivate, onAdjust);
 
         return item;
@@ -235,13 +235,13 @@ class MenuListNavigation {
         }
         const previous = this._items[this._index];
         if (previous !== undefined) {
-            previous.el.classList.remove(MenuListNavigation._selectionClass(previous));
+            previous.el.classList.remove(AppMenuListNavigation._selectionClass(previous));
         }
 
         this._index = index;
         const entry = this._items[index];
         if (entry !== undefined) {
-            entry.el.classList.add(MenuListNavigation._selectionClass(entry));
+            entry.el.classList.add(AppMenuListNavigation._selectionClass(entry));
             this._scrollListTo(entry.el);
             this._mouseArmed = false;
         }
@@ -280,7 +280,7 @@ class MenuListNavigation {
         const before = this._focusSignature();
         step();
         if (this._focusSignature() !== before) {
-            doomSound.playUi('menu/cursor');
+            AppMenuSound.play(AppMenuSound.CURSOR);
         }
 
         return this;
@@ -352,7 +352,7 @@ class MenuListNavigation {
     // Selected first (a touch tap never hovered it) — unless a press is in
     // flight: the whole activation is dropped, selection included.
     _pressItem(entry) {
-        if (MenuDom.isPressing()) {
+        if (AppMenuDom.isPressing()) {
             return;
         }
         this.selectIndex(this._items.indexOf(entry));
@@ -360,7 +360,7 @@ class MenuListNavigation {
             entry.el.click();
             return;
         }
-        MenuDom.press(entry.el, 'doom-menu-item-pressed', entry.action);
+        AppMenuDom.press(entry.el, 'app-menu-item-pressed', entry.action);
     }
 
     // Left/Right walks the side or bottom row, moves a horizontal list, or
@@ -384,13 +384,13 @@ class MenuListNavigation {
         }
         const entry = this._items[this._index];
         if ((entry !== undefined) && ((entry.adjust ?? null) !== null)) {
-            doomSound.playUi('menu/change');
+            AppMenuSound.play(AppMenuSound.CHANGE);
             entry.adjust(dir);
         }
     }
 
     // Validate (Enter / gamepad button 0) on a page without any list entry
-    // (the About popup): the back action is the only thing to validate.
+    // (a text page): the back action is the only thing to validate.
     _validate() {
         if ((this._items.length === 0) && (this._sideIndex === -1) && (this._bottomIndex === -1)) {
             this._goBack();
@@ -406,7 +406,7 @@ class MenuListNavigation {
             this._bottomButtons[0].click();
             return;
         }
-        doomSound.playUi('menu/backup');
+        AppMenuSound.play(AppMenuSound.BACKUP);
         this._onBack();
     }
 
@@ -437,11 +437,11 @@ class MenuListNavigation {
     // any key above or below it, and leads back under its own middle.
     _gridVerticalTarget(dy) {
         const current = this._grid[this._index];
-        const centre  = MenuListNavigation._slotCentre(current);
+        const centre  = AppMenuListNavigation._slotCentre(current);
         let best      = -1;
         let bestGap   = Infinity;
         this._grid.forEach((slot, index) => {
-            const gap = Math.abs(MenuListNavigation._slotCentre(slot) - centre);
+            const gap = Math.abs(AppMenuListNavigation._slotCentre(slot) - centre);
             if ((slot.row === (current.row + dy)) && (gap < bestGap)) {
                 best    = index;
                 bestGap = gap;
@@ -468,16 +468,16 @@ class MenuListNavigation {
         }
         const previous = this._sideButtons[this._sideIndex];
         if (previous !== undefined) {
-            previous.classList.remove('doom-menu-button-focus');
+            previous.classList.remove('app-menu-button-focus');
         }
         this._sideIndex = index;
         const current = this._sideButtons[index];
         if (current !== undefined) {
-            current.classList.add('doom-menu-button-focus');
+            current.classList.add('app-menu-button-focus');
         }
         const entry = this._items[this._index];
         if (entry !== undefined) {
-            entry.el.classList.toggle(MenuListNavigation._selectionClass(entry), (this._sideIndex === -1));
+            entry.el.classList.toggle(AppMenuListNavigation._selectionClass(entry), (this._sideIndex === -1));
         }
     }
 
@@ -492,21 +492,21 @@ class MenuListNavigation {
         }
         const previous = this._bottomButtons[this._bottomIndex];
         if (previous !== undefined) {
-            previous.classList.remove('doom-menu-button-focus');
+            previous.classList.remove('app-menu-button-focus');
         }
         this._bottomIndex = index;
         const current = this._bottomButtons[index];
         if (current !== undefined) {
-            current.classList.add('doom-menu-button-focus');
+            current.classList.add('app-menu-button-focus');
         }
         const entry = this._items[this._index];
         if (entry !== undefined) {
-            entry.el.classList.toggle(MenuListNavigation._selectionClass(entry), (this._bottomIndex === -1));
+            entry.el.classList.toggle(AppMenuListNavigation._selectionClass(entry), (this._bottomIndex === -1));
         }
     }
 
     static _selectionClass(entry) {
-        return ((entry.isButton === true) ? 'doom-menu-button-focus' : 'doom-menu-item-selected');
+        return ((entry.isButton === true) ? 'app-menu-button-focus' : 'app-menu-item-selected');
     }
 
     _selectElement(el) {
@@ -517,7 +517,7 @@ class MenuListNavigation {
         const before = this._focusSignature();
         this.selectIndex(index);
         if (this._focusSignature() !== before) {
-            doomSound.playUi('menu/cursor');
+            AppMenuSound.play(AppMenuSound.CURSOR);
         }
     }
 
@@ -596,13 +596,13 @@ class MenuListNavigation {
         if (this._isBlocked()) {
             this._padState.validate = this._pad.readButtonValidate();
             this._padState.back     = this._pad.readButtonBack();
-            this._padState.start    = this._pad.readButtonPause();
+            this._padState.start    = this._pad.readMenuStart();
             return;
         }
 
         const validate   = this._pad.readButtonValidate();
         const back       = this._pad.readButtonBack();
-        const start      = this._pad.readButtonPause();
+        const start      = this._pad.readMenuStart();
         const directionY = this._readPadDirectionY();
         const directionX = this._readPadDirectionX();
 
@@ -642,14 +642,14 @@ class MenuListNavigation {
     }
 
     _readPadDirectionY() {
-        const stickY    = this._pad.readJoy1Y();
-        const upLimit   = ((this._padHeldY.dir === -1) ? MenuListNavigation.STICK_RELEASE : MenuListNavigation.STICK_PRESS);
-        const downLimit = ((this._padHeldY.dir === 1) ? MenuListNavigation.STICK_RELEASE : MenuListNavigation.STICK_PRESS);
+        const stickY    = this._pad.readMenuStickY();
+        const upLimit   = ((this._padHeldY.dir === -1) ? AppMenuListNavigation.STICK_RELEASE : AppMenuListNavigation.STICK_PRESS);
+        const downLimit = ((this._padHeldY.dir === 1) ? AppMenuListNavigation.STICK_RELEASE : AppMenuListNavigation.STICK_PRESS);
 
-        if (this._pad.readDpadUp() || (stickY > upLimit)) {
+        if (this._pad.readDpadUp() || (stickY < -upLimit)) {
             return -1;
         }
-        if (this._pad.readDpadDown() || (stickY < -downLimit)) {
+        if (this._pad.readDpadDown() || (stickY > downLimit)) {
             return 1;
         }
 
@@ -657,9 +657,9 @@ class MenuListNavigation {
     }
 
     _readPadDirectionX() {
-        const stickX     = this._pad.readJoy1X();
-        const leftLimit  = ((this._padHeldX.dir === -1) ? MenuListNavigation.STICK_RELEASE : MenuListNavigation.STICK_PRESS);
-        const rightLimit = ((this._padHeldX.dir === 1) ? MenuListNavigation.STICK_RELEASE : MenuListNavigation.STICK_PRESS);
+        const stickX     = this._pad.readMenuStickX();
+        const leftLimit  = ((this._padHeldX.dir === -1) ? AppMenuListNavigation.STICK_RELEASE : AppMenuListNavigation.STICK_PRESS);
+        const rightLimit = ((this._padHeldX.dir === 1) ? AppMenuListNavigation.STICK_RELEASE : AppMenuListNavigation.STICK_PRESS);
 
         if (this._pad.readDpadLeft() || (stickX < -leftLimit)) {
             return -1;
@@ -683,9 +683,9 @@ class MenuListNavigation {
             act(direction);
             return;
         }
-        held.ms += MenuListNavigation.PAD_POLL_MS;
-        if (held.ms >= MenuListNavigation.PAD_REPEAT_DELAY_MS) {
-            held.ms -= MenuListNavigation.PAD_REPEAT_RATE_MS;
+        held.ms += AppMenuListNavigation.PAD_POLL_MS;
+        if (held.ms >= AppMenuListNavigation.PAD_REPEAT_DELAY_MS) {
+            held.ms -= AppMenuListNavigation.PAD_REPEAT_RATE_MS;
             act(direction);
         }
     }

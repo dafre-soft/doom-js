@@ -1,4 +1,8 @@
-class InputMouse {
+/**
+ * Mouse over one canvas: pointer lock, movement deltas, wheel notches and the
+ * left button, the click that only grabs the lock left out.
+ */
+class AppInputMouse {
     constructor() {
         this._canvas = null;
         // Set outside _reset: it is a page policy, and _reset runs again on
@@ -14,15 +18,15 @@ class InputMouse {
                 this._dy = 0;
             }
             // Escape is reserved by the browser to leave the pointer lock and
-            // never reaches the page as a key event while locked: losing the
-            // lock IS the pause signal (any other loss counts too).
+            // never reaches the page as a key event while locked: the lock loss
+            // is the only trace of it (any other loss counts too).
             if (wasLocked && !this._locked) {
-                this._pauseRequested = true;
+                this._lockLost = true;
             }
         });
 
         document.addEventListener('pointerlockerror', () => {
-            console.warn('InputMouse: pointer lock failed');
+            console.warn('AppInputMouse: pointer lock failed');
         });
 
         // mouseup listened on the document, registered ONCE: with the
@@ -44,8 +48,8 @@ class InputMouse {
         });
     }
 
-    // The canvas listeners die with the canvas when the ScreenManager destroys
-    // it - bindCanvas is called again with the new canvas on each level
+    // The canvas listeners die with the canvas: a page that replaces its
+    // canvas binds the new one.
     bindCanvas(canvas) {
         this._canvas = canvas;
         this._reset();
@@ -97,15 +101,15 @@ class InputMouse {
 
     // True once when the pointer lock was lost since the last call (the
     // browser's Escape path — the key itself is swallowed while locked).
-    consumePauseRequest() {
-        const requested = this._pauseRequested;
-        this._pauseRequested = false;
+    consumeLockLoss() {
+        const lost = this._lockLost;
+        this._lockLost = false;
 
-        return requested;
+        return lost;
     }
 
-    // Release the pointer lock if this input holds it — leaving the game must
-    // hand the mouse back to the browser (no-op when Escape already did).
+    // Release the pointer lock if this input holds it (no-op when Escape
+    // already did).
     releaseLock() {
         if (this._locked) {
             document.exitPointerLock();
@@ -123,8 +127,8 @@ class InputMouse {
         return this;
     }
 
-    // Grab the pointer lock on the bound canvas. Also callable by the game on
-    // a user gesture (resuming from a pause menu) — fails silently without one.
+    // Grab the pointer lock on the bound canvas. Also callable by the page on
+    // a user gesture — fails silently without one.
     requestLock() {
         if (!this._lockAllowed || document.pointerLockElement || (this._canvas === null)) {
             return;
@@ -148,7 +152,7 @@ class InputMouse {
         this._leftClick      = false;
         this._focusClick     = false;
         this._wheelNotches   = 0;
-        this._pauseRequested = false;
+        this._lockLost       = false;
     }
 
 }

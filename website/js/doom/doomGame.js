@@ -361,7 +361,7 @@ class DoomGame {
         this._role.announcePhase({type: DoomNetProtocol.PAUSE});
         doomSound.playUi('menu/activate');
 
-        this._pauseDisplay = new MenuDisplay('screen').init(true);
+        this._pauseDisplay = new AppMenuDisplay('screen').init(true);
         this._pauseModal   = new MenuPauseModal(this._pauseDisplay)
             .setOnResume(() => this._leavePause())
             .setOnRestart(((this._rules.allowsLevelRestart() && this._role.restartsLevel()) ? () => this._restartLevel() : null))
@@ -470,7 +470,7 @@ class DoomGame {
         this._transitioning = true;
         this.closeGameMenu();
         this.setRestoreSnapshot(snapshot);
-        const loadingDisplay = new MenuDisplay('screen').init(true);
+        const loadingDisplay = new AppMenuDisplay('screen').init(true);
         await this._loadLevel(loadingDisplay, new MenuModal(loadingDisplay), snapshot.levelCode,
             DoomGameSnapshot.spawnOverrideOf(snapshot), snapshot.skill);
     }
@@ -525,7 +525,7 @@ class DoomGame {
     _openDeathMenu() {
         this._inputs.releaseMouse().setVirtualPadVisible(false);
 
-        this._deathDisplay = new MenuDisplay('screen').init(true);
+        this._deathDisplay = new AppMenuDisplay('screen').init(true);
         this._deathModal   = new MenuDeathModal(this._deathDisplay)
             .setOnRestart(() => this._restartLevel())
             .setOnNewGame(() => {
@@ -557,7 +557,7 @@ class DoomGame {
             player.requestRestart();
         }
 
-        const display = new MenuDisplay('screen').init(true);
+        const display = new AppMenuDisplay('screen').init(true);
         this._startNextLevel(display, new MenuModal(display), this._levelCode);
     }
 
@@ -643,7 +643,7 @@ class DoomGame {
         // A pointer-locked canvas would swallow the clicks on the tally button.
         this._inputs.releaseMouse().setVirtualPadVisible(false);
 
-        const display = new MenuDisplay('screen').init(true);
+        const display = new AppMenuDisplay('screen').init(true);
         const modal   = new MenuModal(display);
         // Vanilla order: the story text comes after the tally.
         const finaleText = this._finaleText(outcome.secret);
@@ -807,7 +807,7 @@ class DoomGame {
         const total = Math.max(0, Math.floor(ms / 1000));
         const hours = Math.floor(total / 3600);
 
-        return ((hours > 0) ? (hours + ':' + MenuDom.formatClock(total % 3600, 2)) : MenuDom.formatClock(total, 1));
+        return ((hours > 0) ? (hours + ':' + AppMenuDom.formatClock(total % 3600, 2)) : AppMenuDom.formatClock(total, 1));
     }
 
     // Truncated like the vanilla integer division: 199/200 reads 99 %, not 100 %.

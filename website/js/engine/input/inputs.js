@@ -13,25 +13,34 @@
 let Inputs_private = null;
 
 class Inputs {
-    // Dead-zone rescale shared by the physical and virtual gamepads: the
-    // value restarts at 0 on the dead-zone edge and still reaches 1 at full
-    // deflection. Returns 0 below the dead zone.
-    static rescaleDeadZone(magnitude, deadZone) {
-        if (magnitude < deadZone) {
-            return 0;
-        }
-        return (magnitude - deadZone) / (1 - deadZone);
-    }
-
-    // `defaults` must be a fresh copy: it is modified and returned.
-    static mergeMapping(defaults, overrides) {
-        for (const key of Object.keys(overrides ?? {})) {
-            if (defaults[key] !== undefined) {
-                defaults[key] = overrides[key];
-            }
-        }
-
-        return defaults;
+    // Default binding of each game action: ONE physical key code per action
+    // (layout independent: WASD = ZQSD on AZERTY), '' = unmapped.
+    // Trap: left Ctrl held with the key printing 'q' (strafe left on AZERTY)
+    // QUITS Firefox, a shortcut no page JS can cancel — hence crouch on C.
+    static get KEYBOARD_DEFAULT_MAPPING() {
+        return {
+            forward:     'KeyW',
+            backward:    'KeyS',
+            strafeLeft:  'KeyA',
+            strafeRight: 'KeyD',
+            run:         'ShiftLeft',
+            jump:        'Space',
+            crouch:      'KeyC',
+            action:      'KeyE',
+            fire:        'KeyQ',
+            weaponPrev:  'KeyF',
+            weaponNext:  'KeyG',
+            toggleHud:   'KeyH',
+            // Layout-independent, unlike a letter: 'KeyM' is the QWERTY
+            // position, which prints ',' on AZERTY.
+            map:         'Tab',
+            // Keyboard look fallback ("fake mouse", pointer lock broken in
+            // some VMs): +/- deltas on both axes.
+            lookUp:      'KeyI',
+            lookDown:    'KeyK',
+            lookLeft:    'KeyJ',
+            lookRight:   'KeyL'
+        };
     }
 
     // Order in which the devices are listed to the player.
@@ -49,18 +58,17 @@ class Inputs {
         return 0.8;
     }
 
-    // Creates and owns all the concrete input devices. Soft singleton:
-    // InputKeyboard can only exist once per page, so new Inputs() returns
-    // the already existing instance instead of creating a second one
-    // (the menu creates a new DoomGame on each level launch).
+    // Creates and owns all the concrete input devices. Soft singleton: the
+    // devices listen to the whole page, so new Inputs() returns the already
+    // existing instance instead of creating a second one.
     constructor() {
         if (Inputs_private) {
             return Inputs_private;
         }
         Inputs_private = this;
 
-        this._keyboard       = new InputKeyboard();
-        this._mouse          = new InputMouse();
+        this._keyboard       = new AppInputKeyboard().setActionDefaults(Inputs.KEYBOARD_DEFAULT_MAPPING);
+        this._mouse          = new AppInputMouse();
         this._gamepad        = new InputGamepad();
         this._virtualGamepad = new InputVirtualGamepad();
         this._mode           = 'keyboardMouse';
@@ -178,7 +186,7 @@ class Inputs {
     }
 
     // Optional keyboard rebinding ({action: code}, see
-    // InputKeyboard.DEFAULT_MAPPING): actions left out keep their defaults.
+    // KEYBOARD_DEFAULT_MAPPING): actions left out keep their defaults.
     // Game keys only — the DOM menus read their own fixed keys.
     setKeyMapping(mapping) {
         this._keyboard.setMapping(mapping);
@@ -197,9 +205,9 @@ class Inputs {
         return this;
     }
 
-    // The physical gamepad, shared with the menus so they follow its bindings.
+    // The physical gamepad device, shared with the menus so they follow its bindings.
     getGamepad() {
-        return this._gamepad;
+        return this._gamepad.getDevice();
     }
 
     // Dead zone of one virtual-pad gesture ('move' | 'aim' | 'fire'), as a
@@ -319,7 +327,7 @@ class Inputs {
         // path) when it is. Both are read even with a pad active — Escape
         // must pause for a hybrid player, and the consumable lock-loss flag
         // would otherwise go stale and fire a phantom toggle later.
-        const mousePause = this._mouse.consumePauseRequest();
+        const mousePause = this._mouse.consumeLockLoss();
         const keyPause   = this._keyboard.readKey('Escape');
         const pad        = this._pad();
         if (pad !== null) {

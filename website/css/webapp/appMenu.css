@@ -1,0 +1,279 @@
+/*
+ * Structure of the menus built with js/webapp/menu/, displayed inside the
+ * AppMenuDisplay virtual screen. The container font-size is scaled by the
+ * display ratio (33px at ratio 1): every size below is in em, so the whole menu
+ * stays proportional. Layout only: colours, fonts, borders and backgrounds
+ * belong to the page's own theme, loaded after this sheet.
+ */
+.app-menu-display {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Transparent variant, pinned over the page content (a running game): only the
+   modal overlay then darkens what lies underneath. */
+.app-menu-display-transparent {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+}
+
+.app-menu-subtitle {
+    flex-shrink: 0;
+    padding-bottom: 0.7em;
+    margin-bottom: 0.7em;
+}
+
+/* --- List --- */
+/* In a fixed-height column, the list is the growing/shrinking child: it fills
+   the free space and scrolls when its content overflows (min-height 0 lifts
+   the flexbox min-height:auto floor that would block the scroll). */
+.app-menu-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* Vertical cushion: an entry border flush with the clip edge gets eaten
+       by fractional em positions (sub-pixel borders on phones). */
+    padding: 0.1em 0;
+    margin-bottom: 0.7em;
+}
+
+/* Every scrolling menu area. */
+.app-menu-list,
+.app-menu-modal-list-body {
+    scrollbar-width: thin;
+}
+
+.app-menu-list::-webkit-scrollbar,
+.app-menu-modal-list-body::-webkit-scrollbar {
+    width: 0.2em;
+}
+
+.app-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    padding: 0.45em 0.6em;
+    margin-bottom: 0.25em;
+    cursor: pointer;
+}
+
+.app-menu-item:last-child {
+    margin-bottom: 0;
+}
+
+.app-menu-item-label {
+    flex: 1;
+}
+
+/* Colour square before a label (AppMenuDom.addColorSwatch). */
+.app-menu-color-swatch {
+    flex-shrink: 0;
+    width: 0.8em;
+    height: 0.8em;
+    margin-right: 0.6em;
+}
+
+/* Geometry only: the visual states come from app-menu-button (whose later
+   rules the doubled class outweighs). Sized as a comfortable touch target,
+   still under the row height so lists keep their rhythm. */
+.app-menu-button.app-menu-item-delete {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2em;
+    height: 2em;
+    padding: 0;
+}
+
+/* Shown but not selectable. */
+.app-menu-item-disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* --- Buttons --- */
+.app-menu-button {
+    padding: 0.8em 1.4em;
+    cursor: pointer;
+}
+
+.app-menu-button:disabled {
+    cursor: default;
+}
+
+/* --- Modal --- */
+.app-menu-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.app-menu-modal {
+    width: 48%;
+    padding: 1.2em 1.4em;
+}
+
+.app-menu-modal-message {
+    text-align: center;
+    margin-bottom: 1.4em;
+    white-space: pre-line;
+}
+
+.app-menu-modal-loading {
+    margin-bottom: 0;
+}
+
+.app-menu-modal-wide {
+    width: 75%;
+}
+
+.app-menu-modal-detail {
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 9em;
+    overflow-y: auto;
+    margin-bottom: 1.4em;
+    padding: 0.6em 0.8em;
+}
+
+.app-menu-modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.8em;
+}
+
+.app-menu-button-block {
+    width: 100%;
+}
+
+/* Tall column layout: the body grows, the actions stick to the bottom right.
+   Capped height: a long settings list scrolls inside the body instead of
+   growing the modal past the screen. */
+.app-menu-modal-list {
+    min-height: 60%;
+    max-height: 85%;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-menu-modal-list .app-menu-modal-actions {
+    margin-top: auto;
+    justify-content: flex-end;
+}
+
+.app-menu-modal-list .app-menu-modal-actions-pair {
+    justify-content: center;
+}
+
+/* Page body: fills the modal and scrolls. A page built as a list keeps its own
+   internal scroll, so the body never overflows and shows no second bar. */
+.app-menu-modal-list-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1em;
+}
+
+.app-menu-modal-list-body .app-menu-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+}
+
+.app-menu-modal-heading {
+    text-align: left;
+    margin: 1.2em 0 0.6em;
+}
+
+.app-menu-modal-link {
+    display: block;
+    text-align: left;
+    margin-bottom: 0.9em;
+    word-break: break-all;
+}
+
+.app-menu-modal-line {
+    text-align: left;
+    margin-bottom: 0.6em;
+}
+
+/* --- Text entry modal (on-screen keyboard) --- */
+/* Wide and pinned near the top: the keys must stay a comfortable touch target
+   on a phone, where a 16:9 band is only a few centimetres high. */
+.app-menu-modal-text-entry {
+    width: 88%;
+    align-self: flex-start;
+    margin-top: 1.5em;
+}
+
+.app-menu-text-field {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.6em;
+    margin-bottom: 1em;
+    padding: 0.35em 0.6em;
+    /* Inner spaces must keep their width: the value is what gets stored. */
+    white-space: pre;
+}
+
+/* End-of-text insertion point: a pure CSS blink, no timer to clean up. */
+.app-menu-text-caret {
+    width: 0.08em;
+    height: 1.1em;
+    margin-left: 0.05em;
+    animation: appMenuCaretBlink 1s step-end infinite;
+}
+
+@keyframes appMenuCaretBlink {
+    50% {
+        opacity: 0;
+    }
+}
+
+.app-menu-keyboard {
+    display: grid;
+    gap: 0.6em;
+}
+
+.app-menu-button.app-menu-key {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 2.4em;
+    padding: 0;
+}
+
+/* Icons drawn as masked SVG: they follow the key's colour and states, and
+   never depend on a system font. */
+.app-menu-key-icon::before {
+    content: '';
+    width: 1.4em;
+    height: 1.4em;
+    background-color: currentColor;
+    -webkit-mask: var(--key-icon) center / contain no-repeat;
+    mask: var(--key-icon) center / contain no-repeat;
+}
+
+.app-menu-key-space {
+    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v5h18v-5"/></svg>');
+}
+
+.app-menu-key-erase {
+    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12v14H9l-7-7z"/><path d="M13 9l5 6M18 9l-5 6"/></svg>');
+}
+
+.app-menu-key-cancel {
+    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>');
+}
+
+.app-menu-key-validate {
+    --key-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>');
+}

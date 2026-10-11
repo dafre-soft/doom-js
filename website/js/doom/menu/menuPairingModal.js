@@ -7,7 +7,7 @@
  */
 class MenuPairingModal extends MenuModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);
@@ -49,23 +49,23 @@ class MenuPairingModal extends MenuModal {
      * @param {function}                     onFailed
      */
     _open(title, captions, sequential, session, pair, onPaired, onFailed = () => {}) {
-        const {modal}  = this._createShell(title, 'doom-menu-modal doom-menu-modal-wide doom-menu-modal-pairing', 'doom-menu-subtitle');
-        const stage    = MenuDom.addElement(modal, 'div', 'doom-menu-pairing-stage'
+        const {modal}  = this._createShell(title, 'app-menu-modal app-menu-modal-wide doom-menu-modal-pairing', 'app-menu-subtitle');
+        const stage    = AppMenuDom.addElement(modal, 'div', 'doom-menu-pairing-stage'
             + ((sequential) ? ' doom-menu-pairing-stage-sequential' : ''));
         const elements = {
             qr:            MenuPairingModal._tile(stage, 'div', 'doom-menu-pairing-qr'),
             camera:        MenuPairingModal._tile(stage, 'video', 'doom-menu-pairing-camera'),
             qrCaption:     null,
             cameraCaption: null,
-            status:        MenuDom.addElement(stage, 'div', 'doom-menu-pairing-status')
+            status:        AppMenuDom.addElement(stage, 'div', 'doom-menu-pairing-status')
         };
-        elements.qrCaption     = MenuDom.addElement(elements.qr.parentElement, 'div', 'doom-menu-pairing-caption');
-        elements.cameraCaption = MenuDom.addElement(elements.camera.parentElement, 'div', 'doom-menu-pairing-caption');
+        elements.qrCaption     = AppMenuDom.addElement(elements.qr.parentElement, 'div', 'doom-menu-pairing-caption');
+        elements.cameraCaption = AppMenuDom.addElement(elements.camera.parentElement, 'div', 'doom-menu-pairing-caption');
         elements.camera.muted       = true;
         elements.camera.playsInline = true;
 
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-        const button  = MenuDom.addButton(actions, 'doom-menu-button', appTranslator.get('menu.cancel'), () => session.cancelPairing());
+        const actions = AppMenuDom.addElement(modal, 'div', 'app-menu-modal-actions');
+        const button  = AppMenuDom.addButton(actions, 'app-menu-button', appTranslator.get('menu.cancel'), () => session.cancelPairing());
         this._attachButtonsNav([button], button, 0);
 
         this._view = new QrPairingView(new QrScanner(), elements, captions, session.getCodeChannel())
@@ -136,9 +136,9 @@ class MenuPairingModal extends MenuModal {
 
     // The element of a tile of the stage, its caption added under it by the caller.
     static _tile(stage, tagName, className) {
-        const tile = MenuDom.addElement(stage, 'div', 'doom-menu-pairing-tile');
+        const tile = AppMenuDom.addElement(stage, 'div', 'doom-menu-pairing-tile');
 
-        return MenuDom.addElement(tile, tagName, 'doom-menu-pairing-frame ' + className);
+        return AppMenuDom.addElement(tile, tagName, 'doom-menu-pairing-frame ' + className);
     }
 }
 

@@ -208,7 +208,7 @@ class HudGameBar extends AbstractHud {
                 continue;
             }
             if (effectLine.timed) {
-                el.innerText = appTranslator.get(effectLine.labelCode) + ' ' + MenuDom.formatClock(Math.ceil(remainingMs / 1000), 1);
+                el.innerText = appTranslator.get(effectLine.labelCode) + ' ' + AppMenuDom.formatClock(Math.ceil(remainingMs / 1000), 1);
                 el.style.visibility = ((user.isEffectVisible(effectLine.code)) ? 'visible' : 'hidden');
             } else {
                 el.innerText = appTranslator.get(effectLine.labelCode);
@@ -237,7 +237,7 @@ class HudGameBar extends AbstractHud {
         const limit   = this._rules.timeLimitMs();
         const matchMs = this._stats.getMatchTimeMs();
         const seconds = ((limit !== null) ? Math.ceil(Math.max(0, limit - matchMs) / 1000) : Math.floor(matchMs / 1000));
-        this._els.matchClock.innerText = MenuDom.formatClock(seconds, 2);
+        this._els.matchClock.innerText = AppMenuDom.formatClock(seconds, 2);
     }
 
     // Every player in the level, in slot order; a row more is built only when

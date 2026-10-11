@@ -8,7 +8,7 @@
 class EpisodeScreen extends AbstractMenuScreen {
     /**
      * @param {MenuNavigator} navigator
-     * @param {MenuDisplay}   display
+     * @param {AppMenuDisplay}   display
      * @param {WadRegistry}   registry
      */
     constructor(navigator, display, registry) {

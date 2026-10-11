@@ -1,9 +1,8 @@
 /**
- * Shared DOM building helpers of the doom menu, used by the screens, the
- * modals and the fallback screen — one single way to create an element, a
- * text block or a button.
+ * Shared DOM building helpers of the menus, used by the screens and the modals
+ * — one single way to create an element, a text block or a button.
  */
-class MenuDom {
+class AppMenuDom {
     // Press feedback: a pressed control brightens for this long, then its
     // action fires — the press stays visible on mouse, keyboard, gamepad and
     // touch alike.
@@ -11,21 +10,21 @@ class MenuDom {
     static _pressing         = false;
 
     static isPressing() {
-        return MenuDom._pressing;
+        return AppMenuDom._pressing;
     }
 
     // One press in flight at a time, across every button and list entry: a
     // second activation during the feedback beat is dropped, never queued. A
     // control removed meanwhile (its screen re-rendered) drops its action.
-    static press(el, pressedClass, action, feedbackMs = MenuDom.PRESS_FEEDBACK_MS) {
-        if (MenuDom._pressing === true) {
+    static press(el, pressedClass, action, feedbackMs = AppMenuDom.PRESS_FEEDBACK_MS) {
+        if (AppMenuDom._pressing === true) {
             return;
         }
-        MenuDom._pressing = true;
-        doomSound.playUi('menu/choose');
+        AppMenuDom._pressing = true;
+        AppMenuSound.play(AppMenuSound.CHOOSE);
         el.classList.add(pressedClass);
         setTimeout(() => {
-            MenuDom._pressing = false;
+            AppMenuDom._pressing = false;
             el.classList.remove(pressedClass);
             if (!el.isConnected) {
                 return;
@@ -42,9 +41,9 @@ class MenuDom {
         return element;
     }
 
-    // The square of a player's slot colour, first in its parent.
+    // A colour square (a player's slot colour), first in its parent.
     static addColorSwatch(parent, color) {
-        const swatch = MenuDom.addElement(parent, 'span', 'doom-menu-color-swatch');
+        const swatch = AppMenuDom.addElement(parent, 'span', 'app-menu-color-swatch');
         swatch.style.background = color;
         parent.insertBefore(swatch, parent.firstChild);
 
@@ -52,16 +51,16 @@ class MenuDom {
     }
 
     static addText(parent, className, text) {
-        const element = MenuDom.addElement(parent, 'div', className);
+        const element = AppMenuDom.addElement(parent, 'div', className);
         element.textContent = text;
 
         return element;
     }
 
     // Opens in a new tab: the app is a PWA, so following a link in place would
-    // leave the game shell with no way back.
+    // leave the app shell with no way back.
     static addLink(parent, className, text, href) {
-        const element = MenuDom.addElement(parent, 'a', className);
+        const element = AppMenuDom.addElement(parent, 'a', className);
         element.textContent = text;
         element.href        = href;
         element.target      = '_blank';
@@ -71,17 +70,17 @@ class MenuDom {
     }
 
     // Selectable list entry shell (item + label) — the caller registers it on
-    // its MenuListNavigation and may append extra children (infos, buttons).
+    // its AppMenuListNavigation and may append extra children (infos, buttons).
     static addListItem(listEl, labelText) {
-        const item = MenuDom.addElement(listEl, 'div', 'doom-menu-item');
-        MenuDom.addText(item, 'doom-menu-item-label', labelText);
+        const item = AppMenuDom.addElement(listEl, 'div', 'app-menu-item');
+        AppMenuDom.addText(item, 'app-menu-item-label', labelText);
 
         return item;
     }
 
     // Delete cross of a list row (press feedback included, row not selected).
     static addDeleteButton(item, titleText, onDelete) {
-        const button = MenuDom.addButton(item, 'doom-menu-button doom-menu-item-delete', '\u2715', onDelete);
+        const button = AppMenuDom.addButton(item, 'app-menu-button app-menu-item-delete', '\u2715', onDelete);
         button.title = titleText;
 
         return button;
@@ -90,13 +89,13 @@ class MenuDom {
     // Overlay stacking rule: only the top-most overlay of a display reacts to
     // inputs (a nested modal suspends everything beneath it).
     static isTopOverlay(container, overlay) {
-        const overlays = container.querySelectorAll('.doom-menu-overlay');
+        const overlays = container.querySelectorAll('.app-menu-overlay');
 
         return (overlays[overlays.length - 1] === overlay);
     }
 
     static hasOverlay(container) {
-        return (container.querySelector('.doom-menu-overlay') !== null);
+        return (container.querySelector('.app-menu-overlay') !== null);
     }
 
     static formatSize(bytes) {
@@ -140,14 +139,14 @@ class MenuDom {
     // The blur avoids a focused button: a focused one would swallow the next
     // Enter as a native re-click (e.g. reopening a freshly closed modal).
     // Propagation stops right away — a delete cross must not select its row.
-    static addButton(parent, className, label, onClick, feedbackMs = MenuDom.PRESS_FEEDBACK_MS) {
-        const button = MenuDom.addElement(parent, 'button', className);
+    static addButton(parent, className, label, onClick, feedbackMs = AppMenuDom.PRESS_FEEDBACK_MS) {
+        const button = AppMenuDom.addElement(parent, 'button', className);
         button.type = 'button';
         button.textContent = label;
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             event.currentTarget.blur();
-            MenuDom.press(button, 'doom-menu-button-pressed', () => {
+            AppMenuDom.press(button, 'app-menu-button-pressed', () => {
                 onClick(event);
             }, feedbackMs);
         });

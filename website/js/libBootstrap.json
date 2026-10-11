@@ -1,5 +1,5 @@
 {
-    "version": "v1.1226",
+    "version": "v1.1234",
     "files": {
         "assets": [
             "/assets/uzdoom/doom/sprite/chip1.png",
@@ -39,6 +39,7 @@
             "/lib/zxing-wasm/zxing_full.wasm"
         ],
         "css": [
+            "/css/webapp/appMenu.css",
             "/css/doomMenu.css"
         ],
         "js": [
@@ -85,8 +86,11 @@
             "/js/engine/engine3d.js",
             "/js/engine/spatialGrid.js",
             "/js/engine/collision.js",
-            "/js/engine/input/inputKeyboard.js",
-            "/js/engine/input/inputMouse.js",
+            "/js/webapp/input/appInputMapping.js",
+            "/js/webapp/input/appInputKeyboard.js",
+            "/js/webapp/input/appInputGamepad.js",
+            "/js/webapp/input/appInputMouse.js",
+            "/js/webapp/input/appInputVirtualGamepad.js",
             "/js/engine/input/inputGamepad.js",
             "/js/engine/input/inputVirtualGamepad.js",
             "/js/engine/input/inputs.js",
@@ -101,6 +105,7 @@
             "/js/webapp/appDatabase.js",
             "/js/webapp/appTranslator.js",
             "/js/webapp/appHash.js",
+            "/js/webapp/appSettings.js",
             "/lib/zxing-wasm/zxing-wasm.full.iife.js",
             "/js/webapp/net/netConfig.js",
             "/js/webapp/net/netError.js",
@@ -128,6 +133,16 @@
             "/js/webapp/qr/qrScanner.js",
             "/js/webapp/qr/cameraProbe.js",
             "/js/webapp/qr/qrPairingView.js",
+            "/js/webapp/menu/appMenuSound.js",
+            "/js/webapp/menu/appMenuDisplay.js",
+            "/js/webapp/menu/appMenuDom.js",
+            "/js/webapp/menu/appMenuListNavigation.js",
+            "/js/webapp/menu/appMenuModal.js",
+            "/js/webapp/menu/appMenuAbstractListModal.js",
+            "/js/webapp/menu/appMenuVirtualKeyboard.js",
+            "/js/webapp/menu/appMenuTextEntryModal.js",
+            "/js/webapp/menu/appMenuSettingsModal.js",
+            "/js/webapp/menu/appMenuTranslations.js",
             "/js/doom/doomTranslations.js",
             "/js/doom/doomExternalLinks.js",
             "/js/doom/wad/wadError.js",
@@ -281,14 +296,8 @@
             "/js/doom/net/doomNetCommandCodec.js",
             "/js/doom/net/doomNetTurnCycle.js",
             "/js/doom/net/doomReplicaApplier.js",
-            "/js/doom/menu/menuDisplay.js",
-            "/js/doom/menu/menuDom.js",
             "/js/doom/menu/menuModal.js",
-            "/js/doom/menu/menuVirtualKeyboard.js",
-            "/js/doom/menu/menuTextEntryModal.js",
-            "/js/doom/menu/abstractMenuListModal.js",
             "/js/doom/menu/menuOptionsModal.js",
-            "/js/doom/menu/menuListNavigation.js",
             "/js/doom/menu/menuSaveSlotsModal.js",
             "/js/doom/menu/abstractGameMenuModal.js",
             "/js/doom/menu/menuPauseModal.js",

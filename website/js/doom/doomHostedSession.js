@@ -217,7 +217,7 @@ class DoomHostedSession {
             return;
         }
         this._game.freeze();
-        this._startDisplay = new MenuDisplay('screen').init(true);
+        this._startDisplay = new AppMenuDisplay('screen').init(true);
         this._startLobby   = new MenuLobbyModal(this._startDisplay).openMain(session, {
             start: () => this._startFromLobby(),
             back:  () => this._backFromStartLobby()

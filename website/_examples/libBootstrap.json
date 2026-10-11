@@ -1,5 +1,5 @@
 {
-    "version": "v2.378",
+    "version": "v2.382",
     "files": {
         "assets": [],
         "css": [],
@@ -47,8 +47,11 @@
             "/js/engine/engine3d.js",
             "/js/engine/spatialGrid.js",
             "/js/engine/collision.js",
-            "/js/engine/input/inputKeyboard.js",
-            "/js/engine/input/inputMouse.js",
+            "/js/webapp/input/appInputMapping.js",
+            "/js/webapp/input/appInputKeyboard.js",
+            "/js/webapp/input/appInputGamepad.js",
+            "/js/webapp/input/appInputMouse.js",
+            "/js/webapp/input/appInputVirtualGamepad.js",
             "/js/engine/input/inputGamepad.js",
             "/js/engine/input/inputVirtualGamepad.js",
             "/js/engine/input/inputs.js",

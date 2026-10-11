@@ -1,17 +1,17 @@
 /**
- * Base of the list-carrying modals (options, save slots, pause): one
- * MenuListNavigation wired to the back action and the top-overlay rule, the
+ * Base of the list-carrying modals (settings, a pause menu…): one
+ * AppMenuListNavigation wired to the back action and the top-overlay rule, the
  * onClose contract fired on a real close, and the shared wide shell (title,
  * scrollable body, bottom action button joined to the navigation).
  */
-class AbstractMenuListModal extends MenuModal {
+class AppMenuAbstractListModal extends AppMenuModal {
     /**
-     * @param {MenuDisplay} display
+     * @param {AppMenuDisplay} display
      */
     constructor(display) {
         super(display);
 
-        this._nav = new MenuListNavigation(() => this._onBack(), () => this._navBlocked())
+        this._nav = new AppMenuListNavigation(() => this._onBack(), () => this._navBlocked())
             .setEscapeAsBack(true);
         this._onClose = null;
     }
@@ -48,18 +48,18 @@ class AbstractMenuListModal extends MenuModal {
     // row centres [back] [confirmation], styled like a confirm modal's.
     _openShell(title, buttonLabel, confirmation = null) {
         const {modal, messageEl} = this._createShell(title,
-            'doom-menu-modal doom-menu-modal-wide doom-menu-modal-options', 'doom-menu-subtitle');
-        const bodyEl  = MenuDom.addElement(modal, 'div', 'doom-menu-modal-options-body');
-        const actions = MenuDom.addElement(modal, 'div', 'doom-menu-modal-actions');
-        const button  = MenuDom.addButton(actions, ((confirmation !== null) ? 'doom-menu-button doom-menu-button-secondary' : 'doom-menu-button'),
+            'app-menu-modal app-menu-modal-wide app-menu-modal-list', 'app-menu-subtitle');
+        const bodyEl  = AppMenuDom.addElement(modal, 'div', 'app-menu-modal-list-body');
+        const actions = AppMenuDom.addElement(modal, 'div', 'app-menu-modal-actions');
+        const button  = AppMenuDom.addButton(actions, ((confirmation !== null) ? 'app-menu-button app-menu-button-secondary' : 'app-menu-button'),
             buttonLabel, () => {
                 this._onBack();
             });
         if (confirmation === null) {
             this._nav.setBottomButton(button);
         } else {
-            actions.classList.add('doom-menu-modal-actions-pair');
-            this._nav.setBottomButtons([button, MenuDom.addButton(actions, 'doom-menu-button', confirmation.label, confirmation.action)]);
+            actions.classList.add('app-menu-modal-actions-pair');
+            this._nav.setBottomButtons([button, AppMenuDom.addButton(actions, 'app-menu-button', confirmation.label, confirmation.action)]);
         }
         this._nav.attach();
 
@@ -81,6 +81,6 @@ class AbstractMenuListModal extends MenuModal {
     // Nested confirmation stacked above this modal (its overlay suspends our
     // navigation through the top-overlay rule).
     _confirm(message, onConfirm, confirmLabel = null, cancelLabel = null) {
-        return new MenuModal(this._display).confirm(message, onConfirm, confirmLabel, cancelLabel);
+        return new AppMenuModal(this._display).confirm(message, onConfirm, confirmLabel, cancelLabel);
     }
 }

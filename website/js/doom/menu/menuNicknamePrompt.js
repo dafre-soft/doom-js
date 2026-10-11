@@ -5,7 +5,7 @@
  */
 class MenuNicknamePrompt {
     /**
-     * @param {MenuDisplay}      display
+     * @param {AppMenuDisplay}      display
      * @param {function(string)} onReady - receives the nickname
      */
     static ensure(display, onReady) {
@@ -15,7 +15,7 @@ class MenuNicknamePrompt {
             return;
         }
         const definition = doomSettings.getDefinition(MenuNicknamePrompt.SETTING_KEY);
-        new MenuTextEntryModal(display).open(appTranslator.get('multiplayer.nickname.prompt'), definition, '', (value) => {
+        new AppMenuTextEntryModal(display).open(appTranslator.get('multiplayer.nickname.prompt'), definition, '', (value) => {
             doomSettings.set(MenuNicknamePrompt.SETTING_KEY, value);
             onReady(value);
         });
