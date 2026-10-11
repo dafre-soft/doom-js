@@ -54,6 +54,7 @@ class Instance extends AbstractLoadedEntity {
         this._renderLight            = 1;
         this._renderRoll             = 0;
         this._renderScale            = 1;
+        this._renderDepthBias        = 0;
 
         // Collision (none | faces | box)
         this._collisionShape    = 'none';
@@ -629,6 +630,16 @@ class Instance extends AbstractLoadedEntity {
 
     getRenderRoll() {
         return this._renderRoll;
+    }
+
+    // Draw-time depth pulled towards the camera, in metres (WebGL): a body painted over the ground it dips into,
+    // as a painter's renderer would
+    setRenderDepthBias(metres) {
+        this._renderDepthBias = metres;
+    }
+
+    getRenderDepthBias() {
+        return this._renderDepthBias;
     }
 
     // Draw-time vertical squash of a billboard, feet kept on the ground (1 = full height)

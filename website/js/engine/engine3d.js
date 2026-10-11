@@ -14,6 +14,7 @@ class Engine3d {
         this.instanceLight    = 1;    // light multiplier of the instance being drawn (1 for the static map)
         this.instanceRoll     = 0;    // billboard spin of the instance being drawn
         this.instanceScale    = 1;    // billboard vertical squash of the instance being drawn
+        this.instanceDepthBias = 0;   // depth pulled towards the camera of the instance being drawn (WebGL)
         this.textureSmoothing = true; // texture filter: smoothed, or raw texels
         this.viewYaw          = 0;    // cached in setCamera for the sky pass
         this.viewPitch        = 0;
@@ -284,10 +285,12 @@ class Engine3d {
         this.instanceLight = instance.getRenderLight();
         this.instanceRoll  = instance.getRenderRoll();
         this.instanceScale = instance.getRenderScale();
+        this.instanceDepthBias = instance.getRenderDepthBias();
         this.drawObject(instance.getObject());
         this.instanceLight = 1;
         this.instanceRoll  = 0;
         this.instanceScale = 1;
+        this.instanceDepthBias = 0;
         this.matrixPop();
         return this;
     }

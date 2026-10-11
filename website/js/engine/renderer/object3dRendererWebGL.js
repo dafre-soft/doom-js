@@ -282,6 +282,7 @@ class Object3dRendererWebGL extends Object3dRendererBase {
         gl.uniform1f(loc.h,    engine.scrHeight);
         gl.uniform1f(loc.near, engine.zBuffer.getNear());
         gl.uniform1f(loc.far,  engine.zBuffer.getFar());
+        gl.uniform1f(loc.depthBias, engine.instanceDepthBias);
 
         const lightOverride = ((((engine.lightOverride ?? 0) > 0)) ? engine.lightOverride : null);
         const shading       = (Object3dRendererBase.frameShading(engine) ?? this._neutralDepthShading);
@@ -485,7 +486,7 @@ class Object3dRendererWebGL extends Object3dRendererBase {
             attribute vec3 a_color;
             attribute vec2 a_uv;
             attribute float a_light;
-            uniform float u_sx, u_sy, u_ox, u_oy, u_w, u_h, u_near, u_far;
+            uniform float u_sx, u_sy, u_ox, u_oy, u_w, u_h, u_near, u_far, u_depthBias;
             varying vec3 v_color;
             varying vec2 v_uv;
             varying float v_light;
@@ -506,6 +507,11 @@ class Object3dRendererWebGL extends Object3dRendererBase {
                 float A  = (u_far + u_near) / (u_far - u_near);
                 float B  = -2.0 * u_far * u_near / (u_far - u_near);
                 gl_Position = vec4(xc, yc, A * z + B, z);
+                if (u_depthBias > 0.0) {
+                    // The depth only is pulled towards the camera, never past the near plane.
+                    float zd = max((z - u_depthBias), min(z, u_near));
+                    gl_Position.z = (A * zd + B) * z / zd;
+                }
                 v_color = a_color;
                 v_uv    = a_uv;
                 v_light = a_light;
@@ -593,6 +599,7 @@ class Object3dRendererWebGL extends Object3dRendererBase {
             h:          gl.getUniformLocation(this._program, 'u_h'),
             near:       gl.getUniformLocation(this._program, 'u_near'),
             far:        gl.getUniformLocation(this._program, 'u_far'),
+            depthBias:  gl.getUniformLocation(this._program, 'u_depthBias'),
             uTex:       gl.getUniformLocation(this._program, 'u_tex'),
             hasTex:     gl.getUniformLocation(this._program, 'u_hasTex'),
             alpha:      gl.getUniformLocation(this._program, 'u_alpha'),
