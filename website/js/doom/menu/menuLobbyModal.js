@@ -50,7 +50,7 @@ class MenuLobbyModal extends AppMenuAbstractListModal {
         const {titleEl, bodyEl} = this._openShell('', buttonLabel, confirmation);
         this._titleEl  = titleEl;
         this._listEl   = AppMenuDom.addElement(bodyEl, 'div', 'app-menu-list');
-        this._statusEl = AppMenuDom.addElement(bodyEl, 'div', 'doom-menu-status');
+        this._statusEl = AppMenuDom.addElement(bodyEl, 'div', 'app-menu-status');
         this._shape    = null;
         session.setOnChange(() => this._refresh());
         this._refresh();

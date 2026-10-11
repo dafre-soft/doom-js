@@ -1,7 +1,8 @@
 /**
  * Options modal of the menus: show() opens the options root (settings topics,
  * controls, reset), showAbout() and showHelp() open a standalone page. Adds to
- * AppMenuSettingsModal the Controls page and its key, button and axis captures.
+ * AppMenuSettingsModal the Controls page (device choice, then the settings of
+ * that device; their key, button and axis captures are the socle's).
  */
 class MenuOptionsModal extends AppMenuSettingsModal {
     static get DEVICE_REFRESH_MS() {
@@ -16,37 +17,12 @@ class MenuOptionsModal extends AppMenuSettingsModal {
         return 24;
     }
 
-    static get CAPTURE_POLL_MS() {
-        return 16;
-    }
-
-    // Travel from its rest value that captures an axis, then that brings it back to rest.
-    static get AXIS_CAPTURE_DELTA() {
-        return 0.5;
-    }
-
-    static get AXIS_REST_DELTA() {
-        return 0.25;
-    }
-
-    // Sign of a push towards each capture direction, in the hardware convention (down positive).
-    static get AXIS_DIRECTION_SIGNS() {
-        return {right: 1, up: -1};
-    }
-
     // Settings key prefixes of each input mode (DoomSettings definitions).
     static get SETTING_PREFIXES_BY_MODE() {
         return {
             gamepad:        ['pad.'],
             virtualGamepad: ['virtual_pad.'],
             keyboardMouse:  ['mouse.', 'keyboard.']
-        };
-    }
-
-    // Keys whose layout / code-suffix name does not read well.
-    static get KEY_LABELS() {
-        return {
-            Space: 'key.space'
         };
     }
 
@@ -57,9 +33,6 @@ class MenuOptionsModal extends AppMenuSettingsModal {
         super(display, doomSettings);
 
         this._shownDevices   = null;
-        this._captureHandler = null;
-        this._captureTimer   = null;
-        this._layoutMap      = null;
         this._inGame         = false;
         this._rendererLocked = false;
     }
@@ -112,22 +85,6 @@ class MenuOptionsModal extends AppMenuSettingsModal {
 
     showHelp() {
         return this._open(true, 'help.guide', () => this._buildHelp());
-    }
-
-    _open(standalone, titleCode, builder, confirmation = null) {
-        this._loadLayoutMap();
-
-        return super._open(standalone, titleCode, builder, confirmation);
-    }
-
-    _teardown() {
-        this._stopCapture();
-        super._teardown();
-    }
-
-    // Also blocked while a key or gamepad capture is running.
-    _navBlocked() {
-        return ((this._captureHandler !== null) || (this._captureTimer !== null) || !this._isTopOverlay());
     }
 
     // --- Pages ---
@@ -248,38 +205,6 @@ class MenuOptionsModal extends AppMenuSettingsModal {
 
     // --- Settings hooks ---
 
-    _activateSetting(definition, valueEl) {
-        const inputs = new Inputs();
-        if (definition.type === 'char') {
-            this._startKeyCapture(definition, inputs);
-            return true;
-        }
-        if (definition.type === 'padButton') {
-            this._startPadButtonCapture(definition, inputs);
-            return true;
-        }
-        if (definition.type === 'padAxis') {
-            this._startPadAxisCapture(definition, inputs);
-            return true;
-        }
-
-        return false;
-    }
-
-    _customValueText(definition) {
-        if (definition.type === 'char') {
-            return this._keyLabel(doomSettings.get(definition.key));
-        }
-        if (definition.type === 'padButton') {
-            return this._padButtonLabel(doomSettings.get(definition.key));
-        }
-        if (definition.type === 'padAxis') {
-            return this._padAxisLabel(doomSettings.get(definition.key));
-        }
-
-        return null;
-    }
-
     _applySettings() {
         doomSettings.applyToInputs(new Inputs()).applyToTranslator(appTranslator);
         doomSound.applyVolumes();
@@ -287,186 +212,6 @@ class MenuOptionsModal extends AppMenuSettingsModal {
 
     _rebuildsPage(definition) {
         return (definition.key === MenuOptionsModal.LANGUAGE_KEY);
-    }
-
-    _padButtonLabel(index) {
-        return ((index !== null) ? appTranslator.get('pad.button', {number: index}) : '');
-    }
-
-    _padAxisLabel(code) {
-        const binding = DoomSettings.parseAxisCode(code);
-        if (binding.index === null) {
-            return '';
-        }
-
-        return appTranslator.get((binding.inverted ? 'pad.axisInverted' : 'pad.axis'), {number: binding.index});
-    }
-
-    // --- Binding capture ---
-
-    // A page left only by pressing a key: one key, one action, so the key is
-    // unbound elsewhere. Capture phase, so neither the list navigation nor the
-    // game shortcuts see the press.
-    _startKeyCapture(definition, inputs) {
-        const returnView = this._openCapturePage(definition, 'help.keyCapture');
-
-        this._captureHandler = (event) => {
-            // F1-F12 stay with the browser; Escape is the fixed pause key.
-            if ((event.code.startsWith('F') && (event.code.length <= 3)) || (event.code === 'Escape')) {
-                return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.repeat) {
-                return;
-            }
-            this._saveBinding(definition, event.code, inputs);
-            this._endCapture(returnView);
-        };
-        document.addEventListener('keydown', this._captureHandler, true);
-    }
-
-    // A button held when the page opens (the one that opened it) is only
-    // armed once released.
-    _startPadButtonCapture(definition, inputs) {
-        const pad   = inputs.getGamepad();
-        const armed = pad.readRawButtons().map((down) => !down);
-        let held    = null;
-
-        this._pollPadCapture(definition, inputs, 'help.padButtonCapture', () => {
-            const buttons = pad.readRawButtons();
-            if (held !== null) {
-                return ((buttons[held] === true) ? null : held);
-            }
-            buttons.forEach((down, index) => {
-                armed[index] = (armed[index] || !down);
-            });
-            const index = buttons.findIndex((down, i) => (down && armed[i]));
-
-            held = ((index >= 0) ? index : null);
-
-            return null;
-        });
-    }
-
-    _startPadAxisCapture(definition, inputs) {
-        const pad    = inputs.getGamepad();
-        const rest   = pad.readRawAxes();
-        const travel = (axes, index) => (axes[index] - (rest[index] ?? 0));
-        let pushed   = null;
-
-        this._pollPadCapture(definition, inputs, 'help.padAxisCapture.' + definition.direction, () => {
-            const axes = pad.readRawAxes();
-            if (pushed !== null) {
-                return ((Math.abs(travel(axes, pushed.index)) < MenuOptionsModal.AXIS_REST_DELTA) ? pushed.code : null);
-            }
-            const index = axes.findIndex((value, i) => (Math.abs(travel(axes, i)) > MenuOptionsModal.AXIS_CAPTURE_DELTA));
-            if (index < 0) {
-                return null;
-            }
-            const inverted = (Math.sign(travel(axes, index)) !== MenuOptionsModal.AXIS_DIRECTION_SIGNS[definition.direction]);
-
-            pushed = {index: index, code: DoomSettings.axisCode(index, inverted)};
-
-            return null;
-        });
-    }
-
-    // `step` only returns the value once released: the press must not reach the
-    // list navigation when the page closes.
-    _pollPadCapture(definition, inputs, promptCode, step) {
-        const returnView = this._openCapturePage(definition, promptCode);
-        const pad        = inputs.getGamepad();
-
-        this._captureTimer = setInterval(() => {
-            if (!pad.isAvailable()) {
-                this._endCapture(returnView);
-                return;
-            }
-            const value = step();
-            if (value !== null) {
-                this._saveBinding(definition, value, inputs);
-                this._endCapture(returnView);
-            }
-        }, MenuOptionsModal.CAPTURE_POLL_MS);
-    }
-
-    _openCapturePage(definition, promptCode) {
-        const returnView = this._readListView();
-        this._pushPage(definition.nameCode, () => {
-            AppMenuDom.addText(this._bodyEl, 'app-menu-modal-line',
-                appTranslator.get(promptCode, {action: appTranslator.get(definition.nameCode)}));
-        }, true);
-
-        return returnView;
-    }
-
-    _saveBinding(definition, value, inputs) {
-        doomSettings.bind(definition, value).applyToInputs(inputs);
-    }
-
-    _endCapture(returnView) {
-        this._stopCapture();
-        this._popPage();
-        this._rebuildKeepingView(returnView);
-    }
-
-    _stopCapture() {
-        if (this._captureHandler !== null) {
-            document.removeEventListener('keydown', this._captureHandler, true);
-            this._captureHandler = null;
-        }
-        if (this._captureTimer !== null) {
-            clearInterval(this._captureTimer);
-            this._captureTimer = null;
-        }
-    }
-
-    // Real keyboard layout (code → printed character), Chrome/Edge only.
-    _loadLayoutMap() {
-        if ((this._layoutMap !== null) || !navigator.keyboard || !navigator.keyboard.getLayoutMap) {
-            return;
-        }
-        navigator.keyboard.getLayoutMap().then((map) => {
-            this._layoutMap = map;
-        }).catch(() => {
-            this._layoutMap = null;
-        });
-    }
-
-    _keyLabel(code) {
-        if ((code === '') || (code === null) || (code === undefined)) {
-            return '';
-        }
-        const labelCode = MenuOptionsModal.KEY_LABELS[code];
-        if (labelCode !== undefined) {
-            return appTranslator.get(labelCode);
-        }
-        const modifier = code.match(MenuOptionsModal.MODIFIER_CODE);
-        if (modifier !== null) {
-            return this._modifierLabel(modifier[1], modifier[2]);
-        }
-        if ((this._layoutMap !== null) && this._layoutMap.has(code)) {
-            return this._layoutMap.get(code).toUpperCase();
-        }
-        if (code.startsWith('Key')) {
-            return code.slice(3);
-        }
-        if (code.startsWith('Digit')) {
-            return code.slice(5);
-        }
-        if (code.startsWith('Numpad')) {
-            return appTranslator.get('key.numpad', {key: code.slice(6)});
-        }
-
-        return code;
-    }
-
-    // 'ShiftLeft' → 'Left Shift' / 'Maj gauche': the side reads in each language's order.
-    _modifierLabel(name, side) {
-        const key = ((name === 'Shift') ? appTranslator.get('key.shift') : MenuOptionsModal.MODIFIER_NAMES[name]);
-
-        return appTranslator.get(((side === 'Left') ? 'key.left' : 'key.right'), {key: key});
     }
 
     _buildHelp() {
@@ -493,6 +238,3 @@ class MenuOptionsModal extends AppMenuSettingsModal {
 
 MenuOptionsModal.RENDERER_KEY   = 'display.renderer';
 MenuOptionsModal.LANGUAGE_KEY   = 'display.language';
-MenuOptionsModal.MODIFIER_CODE  = /^(Shift|Control|Alt)(Left|Right)$/;
-// Key cap names, the same in every language (Shift alone is translated).
-MenuOptionsModal.MODIFIER_NAMES = {Control: 'Ctrl', Alt: 'Alt'};

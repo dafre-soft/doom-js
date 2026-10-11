@@ -3,9 +3,7 @@
  * IndexedDB base. The settings UI is built from DEFINITIONS; the game reads the
  * dedicated getters.
  *
- * Types beyond those of AppSettings: 'char' (one physical key code),
- * 'padButton' (one gamepad button index, null unmapped) and 'padAxis' (a signed
- * axis code, see axisCode, AXIS_NONE unmapped).
+ * The control bindings ('char', 'padButton', 'padAxis') are AppSettings types.
  */
 class DoomSettings extends AppSettings {
     // Fine steps at the low end: a floating touch stick re-centres at every
@@ -130,109 +128,6 @@ class DoomSettings extends AppSettings {
 
     constructor() {
         super(DoomSettings.DEFINITIONS, DoomDatabaseSchema.SETTING, DoomDatabaseSchema.SETTING_BY_KEY);
-    }
-
-    _afterLoad() {
-        this._yieldTakenDefaults();
-    }
-
-    // A key, a button or an axis serves one action only: an action still on its
-    // default gives it up when the player saved it for another action (a
-    // default that moved onto a key the player had already chosen).
-    _yieldTakenDefaults() {
-        for (const type of DoomSettings.BINDING_TYPES) {
-            const bindingDefs = DoomSettings.DEFINITIONS.filter((def) => (def.type === type));
-            const saved       = new Set(bindingDefs.filter((def) => (this._values[def.key] !== undefined))
-                .map((def) => DoomSettings.boundControl(def, this._values[def.key])));
-            for (const def of bindingDefs) {
-                if ((this._values[def.key] === undefined) && saved.has(DoomSettings.boundControl(def, def.default))) {
-                    this.set(def.key, DoomSettings.UNBOUND_VALUES[type]);
-                }
-            }
-        }
-    }
-
-    // A 'char' accepts any string, '' meaning unmapped.
-    isValidValue(def, value) {
-        if (def.type === 'char') {
-            return (typeof value === 'string');
-        }
-        if (def.type === 'padButton') {
-            return ((value === null) || (Number.isInteger(value) && (value >= 0)));
-        }
-        if (def.type === 'padAxis') {
-            return ((value === DoomSettings.AXIS_NONE) || ((typeof value === 'string') && DoomSettings.AXIS_CODE.test(value)));
-        }
-
-        return super.isValidValue(def, value);
-    }
-
-    /**
-     * Binds a key, a button or an axis to one action: every other binding of
-     * the same kind holding it becomes unmapped.
-     *
-     * @param {object} definition - a 'char', 'padButton' or 'padAxis' definition
-     * @param {string|int} value
-     */
-    bind(definition, value) {
-        const target = DoomSettings.boundControl(definition, value);
-        for (const def of DoomSettings.DEFINITIONS) {
-            if ((def.type === definition.type) && (def.key !== definition.key) && (DoomSettings.boundControl(def, this.get(def.key)) === target)) {
-                this.set(def.key, DoomSettings.UNBOUND_VALUES[def.type]);
-            }
-        }
-
-        return this.set(definition.key, value);
-    }
-
-    // An axis is held whatever its direction: '+3' and '-3' hold the same axis.
-    static boundControl(def, value) {
-        return ((def.type === 'padAxis') ? DoomSettings.parseAxisCode(value).index : value);
-    }
-
-    // {action: code}: only the bindings saved by the player override the engine defaults.
-    getKeyboardMapping() {
-        return this._getSavedBindings('char');
-    }
-
-    // {action: index|null}, same rule as the keyboard.
-    getPadButtonMapping() {
-        return this._getSavedBindings('padButton');
-    }
-
-    // {slot: {index, inverted}}, same rule as the keyboard, a null index unmapping the slot.
-    getPadAxisMapping() {
-        const mapping = this._getSavedBindings('padAxis');
-        for (const slot of Object.keys(mapping)) {
-            mapping[slot] = DoomSettings.parseAxisCode(mapping[slot]);
-        }
-
-        return mapping;
-    }
-
-    _getSavedBindings(type) {
-        const mapping = {};
-        for (const def of DoomSettings.DEFINITIONS) {
-            if ((def.type === type) && (this._values[def.key] !== undefined)) {
-                mapping[def.action] = this._values[def.key];
-            }
-        }
-
-        return mapping;
-    }
-
-    // Hardware convention: '+3' is axis 3, '-3' the same axis inverted.
-    static axisCode(index, inverted) {
-        return ((inverted ? '-' : '+') + index);
-    }
-
-    // AXIS_NONE gives a null index.
-    static parseAxisCode(code) {
-        if (!DoomSettings.AXIS_CODE.test(code)) {
-            return {index: null, inverted: false};
-        }
-
-        return {index: parseInt(code.slice(1), 10), inverted: code.startsWith('-')};
     }
 
     applyToInputs(inputs) {
@@ -383,10 +278,6 @@ class DoomSettings extends AppSettings {
 
 DoomSettings.LIMIT_NONE               = 'none';
 DoomSettings.DEVICE_AUTO              = 'auto';
-DoomSettings.AXIS_NONE                = 'none';
-DoomSettings.AXIS_CODE                = /^[+-]\d+$/;
-DoomSettings.BINDING_TYPES            = ['char', 'padButton', 'padAxis'];
-DoomSettings.UNBOUND_VALUES           = {char: '', padButton: null, padAxis: DoomSettings.AXIS_NONE};
 DoomSettings.DEATHMATCH_WEAPONS_STAY  = 'weapons_stay';
 DoomSettings.DEATHMATCH_ITEMS_RESPAWN = 'items_respawn';
 

@@ -2,7 +2,8 @@
  * Settings modal: a page stack sharing one AppMenuListNavigation, whose title
  * shows the breadcrumb of the stack ("Options > Display"), and the building of
  * a settings page from the definitions of an AppSettings ('bool' and 'list'
- * cycle on Left/Right, 'text' opens the on-screen keyboard).
+ * cycle on Left/Right, 'text' opens the on-screen keyboard, a control binding
+ * 'char' / 'padButton' / 'padAxis' opens its capture page).
  *
  * A subclass builds its pages through _open / _pushPage and plugs in its own
  * setting types (_activateSetting, _customValueText), what a change applies
@@ -24,6 +25,9 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
         this._pageTimer       = null;
         this._pendingListView = null;
         this._standalone      = false;
+        this._captureHandler  = null;
+        this._captureTimer    = null;
+        this._layoutMap       = null;
     }
 
     /**
@@ -37,6 +41,7 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
      * @param {object|null} confirmation
      */
     _open(standalone, titleCode, builder, confirmation = null) {
+        this._loadLayoutMap();
         this._standalone = (standalone === true);
         const {titleEl, bodyEl, button} = this._openShell('', appTranslator.get('menu.close'), confirmation);
         this._titleEl      = titleEl;
@@ -49,7 +54,13 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
     }
 
     _teardown() {
+        this._stopCapture();
         this._clearPageTimer();
+    }
+
+    // Also blocked while a key or gamepad capture is running.
+    _navBlocked() {
+        return ((this._captureHandler !== null) || (this._captureTimer !== null) || super._navBlocked());
     }
 
     // --- Page stack ---
@@ -146,6 +157,9 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
                 this._openTextEntry(definition, valueEl);
                 return;
             }
+            if (this._startBindingCapture(definition)) {
+                return;
+            }
             if (this._activateSetting(definition, valueEl)) {
                 return;
             }
@@ -190,8 +204,217 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
         if (definition.type === 'list') {
             return this._settings.getListLabel(definition);
         }
+        if (definition.type === 'char') {
+            return this._keyLabel(this._settings.get(definition.key));
+        }
+        if (definition.type === 'padButton') {
+            return this._padButtonLabel(this._settings.get(definition.key));
+        }
+        if (definition.type === 'padAxis') {
+            return this._padAxisLabel(this._settings.get(definition.key));
+        }
 
         return (this._customValueText(definition) ?? String(this._settings.get(definition.key)));
+    }
+
+    // --- Control binding capture ---
+
+    _startBindingCapture(definition) {
+        if (definition.type === 'char') {
+            this._startKeyCapture(definition);
+            return true;
+        }
+        if (definition.type === 'padButton') {
+            this._startPadButtonCapture(definition);
+            return true;
+        }
+        if (definition.type === 'padAxis') {
+            this._startPadAxisCapture(definition);
+            return true;
+        }
+
+        return false;
+    }
+
+    // A page left only by pressing a key: one key, one action, so the key is
+    // unbound elsewhere. Capture phase, so neither the list navigation nor the
+    // game shortcuts see the press.
+    _startKeyCapture(definition) {
+        const returnView = this._openCapturePage(definition, 'menu.capture.key');
+
+        this._captureHandler = (event) => {
+            // F1-F12 stay with the browser; Escape is the fixed pause key.
+            if ((event.code.startsWith('F') && (event.code.length <= 3)) || (event.code === 'Escape')) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.repeat) {
+                return;
+            }
+            this._saveBinding(definition, event.code);
+            this._endCapture(returnView);
+        };
+        document.addEventListener('keydown', this._captureHandler, true);
+    }
+
+    // A button held when the page opens (the one that opened it) is only
+    // armed once released.
+    _startPadButtonCapture(definition) {
+        const pad   = new AppInputGamepad();
+        const armed = pad.readRawButtons().map((down) => !down);
+        let held    = null;
+
+        this._pollPadCapture(definition, 'menu.capture.padButton', () => {
+            const buttons = pad.readRawButtons();
+            if (held !== null) {
+                return ((buttons[held] === true) ? null : held);
+            }
+            buttons.forEach((down, index) => {
+                armed[index] = (armed[index] || !down);
+            });
+            const index = buttons.findIndex((down, i) => (down && armed[i]));
+
+            held = ((index >= 0) ? index : null);
+
+            return null;
+        });
+    }
+
+    _startPadAxisCapture(definition) {
+        const pad    = new AppInputGamepad();
+        const rest   = pad.readRawAxes();
+        const travel = (axes, index) => (axes[index] - (rest[index] ?? 0));
+        let pushed   = null;
+
+        this._pollPadCapture(definition, 'menu.capture.padAxis.' + definition.direction, () => {
+            const axes = pad.readRawAxes();
+            if (pushed !== null) {
+                return ((Math.abs(travel(axes, pushed.index)) < AppMenuSettingsModal.AXIS_REST_DELTA) ? pushed.code : null);
+            }
+            const index = axes.findIndex((value, i) => (Math.abs(travel(axes, i)) > AppMenuSettingsModal.AXIS_CAPTURE_DELTA));
+            if (index < 0) {
+                return null;
+            }
+            const inverted = (Math.sign(travel(axes, index)) !== AppMenuSettingsModal.AXIS_DIRECTION_SIGNS[definition.direction]);
+
+            pushed = {index: index, code: AppSettings.axisCode(index, inverted)};
+
+            return null;
+        });
+    }
+
+    // `step` only returns the value once released: the press must not reach the
+    // list navigation when the page closes.
+    _pollPadCapture(definition, promptCode, step) {
+        const returnView = this._openCapturePage(definition, promptCode);
+        const pad        = new AppInputGamepad();
+
+        this._captureTimer = setInterval(() => {
+            if (!pad.isAvailable()) {
+                this._endCapture(returnView);
+                return;
+            }
+            const value = step();
+            if (value !== null) {
+                this._saveBinding(definition, value);
+                this._endCapture(returnView);
+            }
+        }, AppMenuSettingsModal.CAPTURE_POLL_MS);
+    }
+
+    _openCapturePage(definition, promptCode) {
+        const returnView = this._readListView();
+        this._pushPage(definition.nameCode, () => {
+            AppMenuDom.addText(this._bodyEl, 'app-menu-modal-line',
+                appTranslator.get(promptCode, {action: appTranslator.get(definition.nameCode)}));
+        }, true);
+
+        return returnView;
+    }
+
+    _saveBinding(definition, value) {
+        this._settings.bind(definition, value);
+        this._applySettings();
+    }
+
+    _endCapture(returnView) {
+        this._stopCapture();
+        this._popPage();
+        this._rebuildKeepingView(returnView);
+    }
+
+    _stopCapture() {
+        if (this._captureHandler !== null) {
+            document.removeEventListener('keydown', this._captureHandler, true);
+            this._captureHandler = null;
+        }
+        if (this._captureTimer !== null) {
+            clearInterval(this._captureTimer);
+            this._captureTimer = null;
+        }
+    }
+
+    // --- Control labels ---
+
+    // Real keyboard layout (code → printed character), Chrome/Edge only.
+    _loadLayoutMap() {
+        if ((this._layoutMap !== null) || !navigator.keyboard || !navigator.keyboard.getLayoutMap) {
+            return;
+        }
+        navigator.keyboard.getLayoutMap().then((map) => {
+            this._layoutMap = map;
+        }).catch(() => {
+            this._layoutMap = null;
+        });
+    }
+
+    _keyLabel(code) {
+        if ((code === '') || (code === null) || (code === undefined)) {
+            return '';
+        }
+        const labelCode = AppMenuSettingsModal.KEY_LABELS[code];
+        if (labelCode !== undefined) {
+            return appTranslator.get(labelCode);
+        }
+        const modifier = code.match(AppMenuSettingsModal.MODIFIER_CODE);
+        if (modifier !== null) {
+            return this._modifierLabel(modifier[1], modifier[2]);
+        }
+        if ((this._layoutMap !== null) && this._layoutMap.has(code)) {
+            return this._layoutMap.get(code).toUpperCase();
+        }
+        if (code.startsWith('Key')) {
+            return code.slice(3);
+        }
+        if (code.startsWith('Digit')) {
+            return code.slice(5);
+        }
+        if (code.startsWith('Numpad')) {
+            return appTranslator.get('key.numpad', {key: code.slice(6)});
+        }
+
+        return code;
+    }
+
+    // 'ShiftLeft' → 'Left Shift' / 'Maj gauche': the side reads in each language's order.
+    _modifierLabel(name, side) {
+        const key = ((name === 'Shift') ? appTranslator.get('key.shift') : AppMenuSettingsModal.MODIFIER_NAMES[name]);
+
+        return appTranslator.get(((side === 'Left') ? 'key.left' : 'key.right'), {key: key});
+    }
+
+    _padButtonLabel(index) {
+        return ((index !== null) ? appTranslator.get('pad.button', {number: index}) : '');
+    }
+
+    _padAxisLabel(code) {
+        const binding = AppSettings.parseAxisCode(code);
+        if (binding.index === null) {
+            return '';
+        }
+
+        return appTranslator.get((binding.inverted ? 'pad.axisInverted' : 'pad.axis'), {number: binding.index});
     }
 
     // --- Hooks ---
@@ -241,3 +464,15 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
         AppMenuDom.addLink(this._bodyEl, 'app-menu-modal-link', url, url);
     }
 }
+
+AppMenuSettingsModal.CAPTURE_POLL_MS      = 16;
+// Travel from its rest value that captures an axis, then that brings it back to rest.
+AppMenuSettingsModal.AXIS_CAPTURE_DELTA   = 0.5;
+AppMenuSettingsModal.AXIS_REST_DELTA      = 0.25;
+// Sign of a push towards each capture direction, in the hardware convention (down positive).
+AppMenuSettingsModal.AXIS_DIRECTION_SIGNS = {right: 1, up: -1};
+// Keys whose layout / code-suffix name does not read well.
+AppMenuSettingsModal.KEY_LABELS           = {Space: 'key.space', ArrowLeft: 'key.arrowLeft', ArrowRight: 'key.arrowRight', ArrowUp: 'key.arrowUp', ArrowDown: 'key.arrowDown'};
+AppMenuSettingsModal.MODIFIER_CODE        = /^(Shift|Control|Alt)(Left|Right)$/;
+// Key cap names, the same in every language (Shift alone is translated).
+AppMenuSettingsModal.MODIFIER_NAMES       = {Control: 'Ctrl', Alt: 'Alt'};

@@ -1,5 +1,5 @@
 {
-    "version": "v1.1234",
+    "version": "v1.1238",
     "files": {
         "assets": [
             "/assets/uzdoom/doom/sprite/chip1.png",
@@ -142,6 +142,7 @@
             "/js/webapp/menu/appMenuVirtualKeyboard.js",
             "/js/webapp/menu/appMenuTextEntryModal.js",
             "/js/webapp/menu/appMenuSettingsModal.js",
+            "/js/webapp/menu/appMenuAbstractScreen.js",
             "/js/webapp/menu/appMenuTranslations.js",
             "/js/doom/doomTranslations.js",
             "/js/doom/doomExternalLinks.js",

@@ -18,6 +18,51 @@
     margin: auto;
 }
 
+/* --- Screens (AppMenuAbstractScreen) --- */
+.app-menu-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    /* bigger bottom padding: raises the centered block slightly */
+    padding: 1.2em 1.5em 2em;
+}
+
+/* Fixed height: every screen shows the same panel size, the list inside grows
+   and scrolls. */
+.app-menu-panel {
+    width: 78%;
+    height: 82%;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-menu-actions {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5em;
+}
+
+.app-menu-status {
+    min-height: 1.4em;
+}
+
+.app-menu-screen .app-menu-status + .app-menu-button {
+    margin-top: 0.8em;
+}
+
+.app-menu-empty {
+    text-align: center;
+    padding: 1.2em 0;
+}
+
+.app-menu-footer {
+    margin-top: 0.8em;
+}
+
 .app-menu-subtitle {
     flex-shrink: 0;
     padding-bottom: 0.7em;

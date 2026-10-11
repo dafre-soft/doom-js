@@ -14,19 +14,8 @@
     background: none;
 }
 
-.doom-menu {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    /* bigger bottom padding: raises the centered block slightly */
-    padding: 1.2em 1.5em 2em;
-}
-
 /* --- Title (same identity as the loading screen) --- */
-.doom-menu-title {
+.app-menu-screen-title {
     color: #C0392B;
     font-size: 2.2em;
     font-weight: bold;
@@ -37,13 +26,7 @@
 }
 
 /* --- Central panel --- */
-/* Fixed height: every screen (WAD list, difficulty, levels) shows the same
-   panel size, the list inside grows and scrolls. */
-.doom-menu-panel {
-    width: 78%;
-    height: 82%;
-    display: flex;
-    flex-direction: column;
+.app-menu-panel {
     background: rgba(20, 8, 6, 0.55);
     border: 0.06em solid rgba(192, 57, 43, 0.35);
     border-radius: 0.3em;
@@ -130,13 +113,11 @@
     line-height: 1;
 }
 
-.doom-menu-empty {
+.app-menu-empty {
     color: rgba(255, 255, 255, 0.28);
     font-size: 0.85em;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    text-align: center;
-    padding: 1.2em 0;
 }
 
 /* --- Add form --- */
@@ -203,16 +184,8 @@
     filter: brightness(130%);
 }
 
-.doom-menu-actions {
-    flex-shrink: 0;
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5em;
-}
-
 /* --- Footer (version + webapp stats) --- */
-.doom-menu-footer {
-    margin-top: 0.8em;
+.app-menu-footer {
     color: rgba(255, 255, 255, 0.55);
     font-size: 0.65em;
     letter-spacing: 0.15em;
@@ -442,20 +415,15 @@
 }
 
 /* --- Status / error --- */
-.doom-menu-status {
-    min-height: 1.4em;
+.app-menu-status {
     color: rgba(255, 255, 255, 0.45);
     font-size: 0.8em;
     letter-spacing: 0.12em;
     text-transform: uppercase;
 }
 
-.doom-menu-status.doom-menu-error {
+.app-menu-status-error {
     color: #E74C3C;
-}
-
-.doom-menu .doom-menu-status + .app-menu-button {
-    margin-top: 0.8em;
 }
 
 .app-menu-text-field {

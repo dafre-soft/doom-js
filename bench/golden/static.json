@@ -1,6 +1,6 @@
 {
   "translations/catalog": {
-    "keys": 278,
+    "keys": 282,
     "languages": [
       "en",
       "es",
@@ -18,13 +18,13 @@
   },
   "bootstrap/js": {
     "versionValid": true,
-    "declared": 336,
+    "declared": 337,
     "missing": [],
     "duplicates": [],
     "undeclared": []
   },
   "bootstrap/webapp": {
-    "files": 48,
+    "files": 49,
     "undeclared": []
   },
   "bootstrap/examples": {

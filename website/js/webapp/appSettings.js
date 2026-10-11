@@ -10,6 +10,12 @@
  * `labelCode` (a translation code) or `format` (the code rendered in the current
  * locale: 'percent', 'number', 'minutes'). A subclass adds its own types by
  * overriding isValidValue.
+ *
+ * Control bindings, each carrying the `action` it maps: 'char' (one physical
+ * key code, '' unmapped), 'padButton' (one gamepad button index, null
+ * unmapped) and 'padAxis' (a signed axis code, see axisCode, AXIS_NONE
+ * unmapped; its definition also gives the `direction` the capture asks for).
+ * A key, a button or an axis serves one action only (bind).
  */
 class AppSettings {
     /**
@@ -55,6 +61,7 @@ class AppSettings {
             console.warn(this.constructor.name + ' - unable to load the settings: ' + error.message);
         }
         this._repairValues();
+        this._yieldTakenDefaults();
         this._afterLoad();
 
         return this;
@@ -123,6 +130,15 @@ class AppSettings {
      * @returns {boolean}
      */
     isValidValue(def, value) {
+        if (def.type === 'char') {
+            return (typeof value === 'string');
+        }
+        if (def.type === 'padButton') {
+            return ((value === null) || (Number.isInteger(value) && (value >= 0)));
+        }
+        if (def.type === 'padAxis') {
+            return ((value === AppSettings.AXIS_NONE) || ((typeof value === 'string') && AppSettings.AXIS_CODE.test(value)));
+        }
         if (def.type === 'list') {
             return def.values.some((item) => (item.code === value));
         }
@@ -227,6 +243,91 @@ class AppSettings {
         return codes[((index + direction + codes.length) % codes.length)];
     }
 
+    // --- Control bindings ---
+
+    // An action still on its default gives it up when the player saved it for
+    // another action (a default that moved onto a key the player had already chosen).
+    _yieldTakenDefaults() {
+        for (const type of AppSettings.BINDING_TYPES) {
+            const bindingDefs = this._definitions.filter((def) => (def.type === type));
+            const saved       = new Set(bindingDefs.filter((def) => (this._values[def.key] !== undefined))
+                .map((def) => AppSettings.boundControl(def, this._values[def.key])));
+            for (const def of bindingDefs) {
+                if ((this._values[def.key] === undefined) && saved.has(AppSettings.boundControl(def, def.default))) {
+                    this.set(def.key, AppSettings.UNBOUND_VALUES[type]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Binds a key, a button or an axis to one action: every other binding of
+     * the same kind holding it becomes unmapped.
+     *
+     * @param {object} definition - a 'char', 'padButton' or 'padAxis' definition
+     * @param {string|int} value
+     */
+    bind(definition, value) {
+        const target = AppSettings.boundControl(definition, value);
+        for (const def of this._definitions) {
+            if ((def.type === definition.type) && (def.key !== definition.key) && (AppSettings.boundControl(def, this.get(def.key)) === target)) {
+                this.set(def.key, AppSettings.UNBOUND_VALUES[def.type]);
+            }
+        }
+
+        return this.set(definition.key, value);
+    }
+
+    // An axis is held whatever its direction: '+3' and '-3' hold the same axis.
+    static boundControl(def, value) {
+        return ((def.type === 'padAxis') ? AppSettings.parseAxisCode(value).index : value);
+    }
+
+    // {action: code}: only the bindings saved by the player override the defaults of the input devices.
+    getKeyboardMapping() {
+        return this._getSavedBindings('char');
+    }
+
+    // {action: index|null}, same rule as the keyboard.
+    getPadButtonMapping() {
+        return this._getSavedBindings('padButton');
+    }
+
+    // {slot: {index, inverted}}, same rule as the keyboard, a null index unmapping the slot.
+    getPadAxisMapping() {
+        const mapping = this._getSavedBindings('padAxis');
+        for (const slot of Object.keys(mapping)) {
+            mapping[slot] = AppSettings.parseAxisCode(mapping[slot]);
+        }
+
+        return mapping;
+    }
+
+    _getSavedBindings(type) {
+        const mapping = {};
+        for (const def of this._definitions) {
+            if ((def.type === type) && (this._values[def.key] !== undefined)) {
+                mapping[def.action] = this._values[def.key];
+            }
+        }
+
+        return mapping;
+    }
+
+    // Hardware convention: '+3' is axis 3, '-3' the same axis inverted.
+    static axisCode(index, inverted) {
+        return ((inverted ? '-' : '+') + index);
+    }
+
+    // AXIS_NONE gives a null index.
+    static parseAxisCode(code) {
+        if (!AppSettings.AXIS_CODE.test(code)) {
+            return {index: null, inverted: false};
+        }
+
+        return {index: parseInt(code.slice(1), 10), inverted: code.startsWith('-')};
+    }
+
     // Wipes the whole store, not just the known keys, so orphan rows of older
     // versions go too. Fire-and-forget like set().
     resetAll() {
@@ -241,4 +342,8 @@ class AppSettings {
     }
 }
 
-AppSettings.DIACRITICS = /\p{M}/gu;
+AppSettings.DIACRITICS     = /\p{M}/gu;
+AppSettings.AXIS_NONE      = 'none';
+AppSettings.AXIS_CODE      = /^[+-]\d+$/;
+AppSettings.BINDING_TYPES  = ['char', 'padButton', 'padAxis'];
+AppSettings.UNBOUND_VALUES = {char: '', padButton: null, padAxis: AppSettings.AXIS_NONE};
