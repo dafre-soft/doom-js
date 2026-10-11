@@ -5,7 +5,7 @@ class Engine3d {
         this.scrWidth         = 0;
         this.scrHeight        = 0;
         this.background       = [0, 0, 0];
-        this.sky              = null; // {loaderId, wrap} cylindrical-sky descriptor, or null
+        this.sky              = null; // {loaderId, wrap, top?, bottom?, mirrorBelow?, capBottom?, followRoll?} cylindrical sky (WebGL), or null
         this.depthShading     = null; // depth-based light attenuation curve params, or null
         this.lightOverride    = null; // global light floor 0..1 (scene-wide fullbright), or null
         this.lightBoost       = 0;    // additive scene-wide light 0..1 (brief flashes), 0 = off
@@ -17,6 +17,7 @@ class Engine3d {
         this.textureSmoothing = true; // texture filter: smoothed, or raw texels
         this.viewYaw          = 0;    // cached in setCamera for the sky pass
         this.viewPitch        = 0;
+        this.viewRoll         = 0;    // camera lean, for a sky that follows it
         this.viewMatrix       = new Matrix();
         this.fov              = 0.0;
         // Frustum half-slopes, infinite until preComputeViewport so a
@@ -268,6 +269,7 @@ class Engine3d {
     setCamera(user) {
         this.viewYaw   = user.yaw;
         this.viewPitch = user.pitch;
+        this.viewRoll  = user.getStrafeLean();
         this.matrixIdentity();
         this.matrixRotateX(user.pitch);
         this.matrixRotateZ(user.getStrafeLean());

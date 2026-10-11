@@ -1,6 +1,8 @@
 class Matrix {
     // Shared by rendering, collision and world centres: position, rotation
-    // X/Z/Y, then the animation delta translation and delta rotation X/Z/Y.
+    // X/Z/Y, then the animation delta translation and delta rotation X/Z/Y,
+    // then the optional own rotation of the part, the first to turn a vertex:
+    // about X, then Y, then Z (a wheel rolls, then steers).
     static composeInstanceTransform(tf) {
         const [px, py, pz]    = tf.position;
         const [irx, iry, irz] = tf.rotation;
@@ -34,6 +36,18 @@ class Matrix {
         }
         if (dry) {
             apply('rotationY', dry * DEG_TO_RAD);
+        }
+        if (tf.preRotate) {
+            const [prx, pry, prz] = tf.preRotate;
+            if (prz) {
+                apply('rotationZ', prz * DEG_TO_RAD);
+            }
+            if (pry) {
+                apply('rotationY', pry * DEG_TO_RAD);
+            }
+            if (prx) {
+                apply('rotationX', prx * DEG_TO_RAD);
+            }
         }
         return m;
     }

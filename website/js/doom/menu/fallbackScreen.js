@@ -19,8 +19,8 @@ class FallbackScreen extends AbstractMenuScreen {
     }
 
     _build() {
-        this._addTitle('Spipu-Doom');
-        this._statusEl = this._addElement('div', 'app-menu-status');
+        this._addTitle(this._titleText());
+        this._addStatus();
         this._setError(appTranslator.get(this._messageCode));
     }
 }

@@ -11,6 +11,7 @@ class Instance extends AbstractLoadedEntity {
         this._rotation          = [0, 0, 0];
         this._worldCenter       = [0, 0, 0];
         this._delta             = { translate: [0, 0, 0], rotate: [0, 0, 0] };
+        this._preRotate         = null; // own rotation of the part, before the deltas (Matrix.composeInstanceTransform)
         this._prevTransform     = null;
 
         this._animKeyframes      = [];
@@ -649,6 +650,17 @@ class Instance extends AbstractLoadedEntity {
         return (2 * Math.sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]));
     }
 
+    /**
+     * Own rotation of the part in degrees, turning a vertex before everything else (null: none).
+     *
+     * @param {number[]|null} rotate - [x, y, z]
+     */
+    setPreRotate(rotate) {
+        this._preRotate = rotate;
+
+        return this;
+    }
+
     getRenderTransform() {
         const t = this.getTransform();
         if (this._renderOffset === null) {
@@ -662,7 +674,8 @@ class Instance extends AbstractLoadedEntity {
             ],
             rotation:       t.rotation,
             deltaTranslate: t.deltaTranslate,
-            deltaRotate:    t.deltaRotate
+            deltaRotate:    t.deltaRotate,
+            preRotate:      t.preRotate
         };
     }
 
@@ -964,12 +977,18 @@ class Instance extends AbstractLoadedEntity {
     }
 
     getTransform() {
-        return {
+        const transform = {
             position:       this._position,
             rotation:       this._rotation,
             deltaTranslate: this._delta.translate,
             deltaRotate:    this._delta.rotate,
         };
+        // Only a part that has one carries it, so the transforms of the others stay as they were.
+        if (this._preRotate !== null) {
+            transform.preRotate = this._preRotate;
+        }
+
+        return transform;
     }
 
     // Animation delta plus any ride or game-driven move since load

@@ -85,8 +85,13 @@ class Object3dRendererWebGL extends Object3dRendererBase {
         gl.uniform1f(loc.h,      engine.scrHeight);
         gl.uniform1f(loc.yaw,    engine.viewYaw * DEG);
         gl.uniform1f(loc.pitch,  engine.viewPitch * DEG);
+        // The sky leans with the camera when it asks for it (a car rolling on the road); a Doom sky stays level.
+        gl.uniform1f(loc.roll,   ((engine.sky.followRoll === true) ? (engine.viewRoll * DEG) : 0));
         gl.uniform1f(loc.fov,    engine.fov);
         gl.uniform1f(loc.wrap,   engine.sky.wrap);
+        gl.uniform1f(loc.elTop,    (engine.sky.top ?? Object3dRendererWebGL.SKY_TOP));
+        gl.uniform1f(loc.elBottom, (engine.sky.bottom ?? Object3dRendererWebGL.SKY_BOTTOM));
+        gl.uniform1f(loc.mirror,   ((engine.sky.mirrorBelow === false) ? 0 : 1));
         // Cap colours above and below the textured band: top = the scene
         // background, bottom = the sky's own bottom cap when it declares one
         // (looking down past the band, e.g. through a sky floor).
@@ -117,10 +122,8 @@ class Object3dRendererWebGL extends Object3dRendererBase {
             precision mediump float;
             uniform sampler2D u_sky;
             uniform vec3  u_cap, u_capB;
-            uniform float u_w, u_h, u_yaw, u_pitch, u_fov, u_wrap;
+            uniform float u_w, u_h, u_yaw, u_pitch, u_roll, u_fov, u_wrap, u_elTop, u_elBottom, u_mirror;
             const float PI = 3.14159265;
-            const float EL_MAX  = 0.6;    // elevation (rad) the texture spans
-            const float EL_DOWN = 0.12;   // shift the whole sky down a touch so its bottom dips just below the walls
             void main() {
                 // Per-pixel 3D view ray → spherical (azimuth, elevation): the
                 // perspective curves the sky like a dome and converges looking up.
@@ -129,11 +132,19 @@ class Object3dRendererWebGL extends Object3dRendererBase {
                 float t  = tan(u_fov);                                    // half horizontal FOV
                 vec3 r = normalize(vec3(nx * t, ny * t * (u_h / u_w), 1.0));
                 float cp = cos(u_pitch), sp = sin(u_pitch);              // pitch rotation (X)
-                vec3 rp = vec3(r.x, r.y * cp + r.z * sp, -r.y * sp + r.z * cp);
+                vec3 rq = vec3(r.x, r.y * cp + r.z * sp, -r.y * sp + r.z * cp);
+                float cr = cos(u_roll), sr = sin(u_roll);                // camera lean (Z), applied after the pitch
+                vec3 rp = vec3(rq.x * cr - rq.y * sr, rq.x * sr + rq.y * cr, rq.z);
                 float az = atan(rp.x, rp.z) + u_yaw;
                 float el = asin(clamp(rp.y, -1.0, 1.0));                 // 0 = horizon
                 float u  = fract(az * u_wrap / (2.0 * PI));
-                float vv = (el + EL_DOWN) / EL_MAX;                       // texture bottom sits EL_DOWN below the horizon → 1 texture top
+                float vv = (el - u_elBottom) / (u_elTop - u_elBottom);    // 0 = texture bottom, 1 = texture top
+                if (u_mirror < 0.5) {
+                    // Panorama: the texture holds its own ground; plain caps beyond it.
+                    vec3 band = texture2D(u_sky, vec2(u, 1.0 - clamp(vv, 0.0, 1.0))).rgb;
+                    gl_FragColor = vec4(((vv > 1.0) ? u_cap : ((vv < 0.0) ? u_capB : band)), 1.0);
+                    return;
+                }
                 // Below the band the texture is MIRRORED downward (GZDoom's
                 // lower sky dome — sky floors show sky, not a flat cap), and
                 // each side fades into its own cap when looking steeply.
@@ -153,8 +164,12 @@ class Object3dRendererWebGL extends Object3dRendererBase {
             h:      gl.getUniformLocation(this._skyProgram, 'u_h'),
             yaw:    gl.getUniformLocation(this._skyProgram, 'u_yaw'),
             pitch:  gl.getUniformLocation(this._skyProgram, 'u_pitch'),
+            roll:   gl.getUniformLocation(this._skyProgram, 'u_roll'),
             fov:    gl.getUniformLocation(this._skyProgram, 'u_fov'),
             wrap:   gl.getUniformLocation(this._skyProgram, 'u_wrap'),
+            elTop:    gl.getUniformLocation(this._skyProgram, 'u_elTop'),
+            elBottom: gl.getUniformLocation(this._skyProgram, 'u_elBottom'),
+            mirror:   gl.getUniformLocation(this._skyProgram, 'u_mirror'),
         };
 
         this._skyVbo = gl.createBuffer();
@@ -609,3 +624,7 @@ class Object3dRendererWebGL extends Object3dRendererBase {
         return shader;
     }
 }
+
+// Default sky band (radians above the horizon): Doom's sky, its bottom dipping just below the walls.
+Object3dRendererWebGL.SKY_TOP    = 0.48;
+Object3dRendererWebGL.SKY_BOTTOM = -0.12;

@@ -5,7 +5,8 @@
  * list, status, back button, footer) and the same selection model on its list
  * items, provided by AppMenuListNavigation (mouse hover, keyboard and gamepad
  * all drive one single highlighted entry). A project gives its title
- * (_titleText) and builds its screens on top (_build).
+ * (_titleText), may override the footer prefix (_footerPrefix) and builds its
+ * screens on top (_build).
  */
 class AppMenuAbstractScreen {
     /**
@@ -57,9 +58,13 @@ class AppMenuAbstractScreen {
         throw new Error(this.constructor.name + '._build must be implemented');
     }
 
-    // The title above the panel (the application's name).
     _titleText() {
         throw new Error(this.constructor.name + '._titleText must be implemented');
+    }
+
+    // Release stage shown before the version in the footer.
+    _footerPrefix() {
+        return 'beta';
     }
 
     // Screens with a parent screen override this to navigate back
@@ -144,7 +149,7 @@ class AppMenuAbstractScreen {
         if (this._footerEl === null) {
             return;
         }
-        this._footerEl.textContent = 'beta ' + appBootstrap.getVersion()
+        this._footerEl.textContent = this._footerPrefix() + ' ' + appBootstrap.getVersion()
             + ' — ' + appBootstrap.getStatsText()
             + ' — © ' + new Date().getFullYear() + ' Spipu';
     }
