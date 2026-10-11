@@ -13,10 +13,6 @@ class MenuOptionsModal extends AppMenuSettingsModal {
         return 'controls.device';
     }
 
-    static get GAMEPAD_NAME_MAX_LENGTH() {
-        return 24;
-    }
-
     // Settings key prefixes of each input mode (DoomSettings definitions).
     static get SETTING_PREFIXES_BY_MODE() {
         return {
@@ -175,26 +171,10 @@ class MenuOptionsModal extends AppMenuSettingsModal {
             return appTranslator.get('device.virtualPad');
         }
         if (mode === 'gamepad') {
-            return appTranslator.get('device.gamepad', {name: MenuOptionsModal.gamepadDisplayName(inputs.getGamepadName() ?? '')});
+            return appTranslator.get('device.gamepad', {name: AppInputGamepad.displayName(inputs.getGamepadName() ?? '')});
         }
 
         return appTranslator.get('device.keyboardMouse');
-    }
-
-    /**
-     * The browser's gamepad id stripped of its vendor / product numbers
-     * (Firefox "054c-0ce6-Name", Chrome "Name (STANDARD GAMEPAD Vendor: 054c
-     * Product: 0ce6)"), cut to fit the settings line.
-     * @param {string} id
-     * @returns {string}
-     */
-    static gamepadDisplayName(id) {
-        const name = (id.replace(/^[0-9a-f]{1,4}-[0-9a-f]{1,4}-/i, '').replace(/\s*\([^)]*Vendor:[^)]*\)\s*$/i, '').trim() || id.trim());
-        if (name.length <= MenuOptionsModal.GAMEPAD_NAME_MAX_LENGTH) {
-            return name;
-        }
-
-        return name.slice(0, (MenuOptionsModal.GAMEPAD_NAME_MAX_LENGTH - 1)).trimEnd() + '…';
     }
 
     _buildSettingsPage(prefix) {

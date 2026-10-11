@@ -118,6 +118,18 @@ class AppMenuTranslations {
                 it: 'Asse {number}',
                 es: 'Eje {number}'
             },
+            'menu.binding': {
+                fr: '{action} : {control}',
+                en: '{action}: {control}',
+                it: '{action}: {control}',
+                es: '{action}: {control}'
+            },
+            'menu.unbound': {
+                fr: 'non attribuée',
+                en: 'not set',
+                it: 'non assegnato',
+                es: 'sin asignar'
+            },
             'pad.axisInverted': {
                 fr: 'Axe {number} inversé',
                 en: 'Axis {number} inverted',

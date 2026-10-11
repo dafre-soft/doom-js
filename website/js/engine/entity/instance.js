@@ -668,6 +668,19 @@ class Instance extends AbstractLoadedEntity {
      */
     setPreRotate(rotate) {
         this._preRotate = rotate;
+        this._refreshWorldCenter();
+
+        return this;
+    }
+
+    /**
+     * Rotation of the instance in degrees, set from outside the animation.
+     *
+     * @param {number[]} rotation - [x, y, z]
+     */
+    setRotation(rotation) {
+        this._rotation = [rotation[0], rotation[1], rotation[2]];
+        this._refreshWorldCenter();
 
         return this;
     }

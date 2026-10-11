@@ -303,6 +303,34 @@ class AppSettings {
         return mapping;
     }
 
+    /**
+     * The bound actions on the input devices: their defaults from the definitions, overridden by the player's
+     * own bindings.
+     *
+     * @param {AppInputKeyboard} keyboard
+     * @param {AppInputGamepad}  gamepad
+     */
+    applyBindings(keyboard, gamepad) {
+        const keys    = {};
+        const buttons = {};
+        const axes    = {};
+        for (const def of this._definitions) {
+            if (def.type === 'char') {
+                keys[def.action] = def.default;
+            } else if (def.type === 'padButton') {
+                buttons[def.action] = def.default;
+            } else if (def.type === 'padAxis') {
+                axes[def.action] = AppSettings.parseAxisCode(def.default);
+            }
+        }
+        keyboard.setActionDefaults(keys).setMapping(this.getKeyboardMapping());
+        gamepad.setActionDefaults(buttons, axes)
+            .setButtonMapping(this.getPadButtonMapping())
+            .setAxisMapping(this.getPadAxisMapping());
+
+        return this;
+    }
+
     _getSavedBindings(type) {
         const mapping = {};
         for (const def of this._definitions) {

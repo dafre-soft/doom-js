@@ -127,6 +127,22 @@ class AppInputGamepad {
         return ((pad !== null) ? pad.id : null);
     }
 
+    /**
+     * The browser's gamepad id stripped of its vendor / product numbers
+     * (Firefox "054c-0ce6-Name", Chrome "Name (STANDARD GAMEPAD Vendor: 054c
+     * Product: 0ce6)"), cut to fit a settings line.
+     * @param {string} id
+     * @returns {string}
+     */
+    static displayName(id) {
+        const name = (id.replace(/^[0-9a-f]{1,4}-[0-9a-f]{1,4}-/i, '').replace(/\s*\([^)]*Vendor:[^)]*\)\s*$/i, '').trim() || id.trim());
+        if (name.length <= AppInputGamepad.NAME_MAX_LENGTH) {
+            return name;
+        }
+
+        return name.slice(0, (AppInputGamepad.NAME_MAX_LENGTH - 1)).trimEnd() + '…';
+    }
+
     readRawButtons() {
         const pad = this._getPad();
 
@@ -267,3 +283,4 @@ AppInputGamepad.START_BUTTON      = 9;
 AppInputGamepad.DPAD_FIRST_BUTTON = 12;
 AppInputGamepad.LEFT_STICK_X      = 0;
 AppInputGamepad.LEFT_STICK_Y      = 1;
+AppInputGamepad.NAME_MAX_LENGTH   = 24;

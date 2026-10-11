@@ -282,14 +282,14 @@ class Engine3d {
     drawInstance(instance) {
         this.matrixPush();
         this.viewMatrix.multiply(Matrix.composeInstanceTransform(instance.getRenderTransform()));
-        this.instanceLight = instance.getRenderLight();
-        this.instanceRoll  = instance.getRenderRoll();
-        this.instanceScale = instance.getRenderScale();
+        this.instanceLight     = instance.getRenderLight();
+        this.instanceRoll      = instance.getRenderRoll();
+        this.instanceScale     = instance.getRenderScale();
         this.instanceDepthBias = instance.getRenderDepthBias();
         this.drawObject(instance.getObject());
-        this.instanceLight = 1;
-        this.instanceRoll  = 0;
-        this.instanceScale = 1;
+        this.instanceLight     = 1;
+        this.instanceRoll      = 0;
+        this.instanceScale     = 1;
         this.instanceDepthBias = 0;
         this.matrixPop();
         return this;

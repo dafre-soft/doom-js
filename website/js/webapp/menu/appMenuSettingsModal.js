@@ -459,6 +459,17 @@ class AppMenuSettingsModal extends AppMenuAbstractListModal {
         AppMenuDom.addText(this._bodyEl, 'app-menu-modal-heading', text);
     }
 
+    // The current binding of every action of a settings prefix ('keyboard.', 'pad.'), under a heading.
+    _addBindings(heading, prefix) {
+        this._addHeading(heading);
+        for (const definition of this._settings.getDefinitions(prefix)) {
+            AppMenuDom.addText(this._bodyEl, 'app-menu-modal-line', appTranslator.get('menu.binding', {
+                action:  appTranslator.get(definition.nameCode),
+                control: (this._settingValueText(definition) || appTranslator.get('menu.unbound'))
+            }));
+        }
+    }
+
     // The URL is its own label: an address is a proper noun, never translated.
     _addExternalLink(url) {
         AppMenuDom.addLink(this._bodyEl, 'app-menu-modal-link', url, url);
