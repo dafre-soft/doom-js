@@ -38,6 +38,15 @@ class Object3dRendererBase {
     // the sorted queue keeps those runs long. A no-op for webgl, which
     // overrides draw and queues nothing.
     end(engine) {
+        this._flushQueue(engine);
+    }
+
+    // flat and fast have no depth buffer: the queue is painted now, so what comes next paints over it.
+    clearDepth(engine) {
+        this._flushQueue(engine);
+    }
+
+    _flushQueue(engine) {
         const ctx      = engine.scrCtx;
         const geometry = this._queue.getGeometry();
         const styles   = this._queue.getStyles();
@@ -59,6 +68,7 @@ class Object3dRendererBase {
             ctx.fill();
             ctx.stroke();
         }
+        this._queue.clear();
     }
 
     // Style slot of the frame, -1 when that key has not been registered yet:

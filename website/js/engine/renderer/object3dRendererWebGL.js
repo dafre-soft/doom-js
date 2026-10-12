@@ -64,6 +64,14 @@ class Object3dRendererWebGL extends Object3dRendererBase {
         gl.useProgram(this._program);
     }
 
+    clearDepth(engine) {
+        const gl = engine.scrCtx;
+        if (!gl) {
+            return;
+        }
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+    }
+
     // Cylindrical-sky pre-pass: a full-screen quad sampling the sky texture by
     // view angle. Drawn first with depth test OFF (no depth write), so geometry
     // overwrites it wherever it draws — only the un-drawn sky holes keep it.
@@ -133,8 +141,8 @@ class Object3dRendererWebGL extends Object3dRendererBase {
                 vec3 r = normalize(vec3(nx * t, ny * t * (u_h / u_w), 1.0));
                 float cp = cos(u_pitch), sp = sin(u_pitch);              // pitch rotation (X)
                 vec3 rq = vec3(r.x, r.y * cp + r.z * sp, -r.y * sp + r.z * cp);
-                float cr = cos(u_roll), sr = sin(u_roll);                // camera lean (Z), applied after the pitch
-                vec3 rp = vec3(rq.x * cr - rq.y * sr, rq.x * sr + rq.y * cr, rq.z);
+                float cr = cos(u_roll), sr = sin(u_roll);                // camera lean (Z) after the pitch, the inverse of setCamera's
+                vec3 rp = vec3(rq.x * cr + rq.y * sr, -rq.x * sr + rq.y * cr, rq.z);
                 float az = atan(rp.x, rp.z) + u_yaw;
                 float el = asin(clamp(rp.y, -1.0, 1.0));                 // 0 = horizon
                 float u  = fract(az * u_wrap / (2.0 * PI));

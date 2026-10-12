@@ -300,6 +300,15 @@ class Engine3d {
         return this;
     }
 
+    /**
+     * Starts a new depth layer within the frame: what is drawn next lies over everything drawn so far, while
+     * keeping its own depth order (a cockpit over the scenery it dips into).
+     */
+    clearDepth() {
+        this._renderer.clearDepth(this);
+        return this;
+    }
+
     drawObject(obj) {
         obj.ptTransform(this.viewMatrix, this.zBuffer.getNear(), this.instanceRoll, this.instanceScale);
         if (this._renderer.needsProjection()) {

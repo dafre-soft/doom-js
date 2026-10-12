@@ -53,6 +53,10 @@ class Object3dRendererFull extends Object3dRendererBase {
         engine.scrCtx.putImageData(engine.scrData, 0, 0);
     }
 
+    clearDepth(engine) {
+        engine.zBuffer.clear(engine.scrWidth, engine.scrHeight);
+    }
+
     draw(obj, engine) {
         for (const faceIndices of [obj.opaqueFaces, obj.alphaFaces]) {
             for (const k of faceIndices) {
