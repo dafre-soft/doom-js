@@ -840,10 +840,10 @@
     "secrets": 6
   },
   "Doom1/E1M2+water": {
-    "sha": "e3d48b2dd239b0fab92579a2697d84f0af5e14e77a1c4abb8d05facb658d7603",
+    "sha": "a3290d6e807fb81e046f4727d26d6844f11ebff9ea6ce45372aa28ee5d821418",
     "objects": 947,
-    "points": 11212,
-    "faces": 6108,
+    "points": 11226,
+    "faces": 6120,
     "textures": 912,
     "instances": 242,
     "interactions": 24,
@@ -960,10 +960,10 @@
     "secrets": 12
   },
   "Doom1/E2M2+water": {
-    "sha": "478562ea11854afac9a5116717bd50b0aa8be46bc92cfc2ddb502b7ff044419d",
+    "sha": "3841ae8aff28f0ba8f45b7c379d667683829ee4d8c1c90108567a4fc1a910a0e",
     "objects": 942,
-    "points": 14805,
-    "faces": 8493,
+    "points": 14855,
+    "faces": 8529,
     "textures": 918,
     "instances": 373,
     "interactions": 57,
@@ -1188,10 +1188,10 @@
     "secrets": 1
   },
   "Doom2/MAP02+water": {
-    "sha": "a61c396b2c528da3d278b5da5b3ac93203764e63fa52a7fb9c2047c8d483f655",
+    "sha": "92473276487ecd3055de7ed49d2ccea9ee7abd143347aea8217ca97b48601e9b",
     "objects": 1565,
-    "points": 10086,
-    "faces": 5414,
+    "points": 10094,
+    "faces": 5418,
     "textures": 1528,
     "instances": 175,
     "interactions": 29,

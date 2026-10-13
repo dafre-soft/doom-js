@@ -35,7 +35,7 @@ class WadLiquidSurfaces {
         }
         const {sectors} = this._level;
         for (let si = 0; si < sectors.length; si++) {
-            const clip = ((this._bank.isLiquidFlat(sectors[si].ft)) ? this._terrains.footclipOf(sectors[si].ft) : 0);
+            const clip = this._footclipOf(si);
             // A "+change" floor may turn dry at runtime: it keeps the plain floor.
             if ((clip <= 0) || (this._analysis.floorChange[si] !== undefined)) {
                 continue;
@@ -84,17 +84,20 @@ class WadLiquidSurfaces {
      *                     floor mover, one per sector in ascending order, then the still ones merged
      */
     buildAll() {
+        const sheets = [
+            ...Object.keys(this._surface).map(Number).map((si) => ({si: si, sourceSi: si, line: this._waterLine(si), rideCode: (this._analysis.floorMovers.get(si)?.code ?? null), sides: true})),
+            ...this._moverSheets()
+        ].sort((a, b) => (a.si - b.si));
         const built = [];
         const still = WadMeshBuilder.newMesh();
-        for (const si of Object.keys(this._surface).map(Number).sort((a, b) => (a - b))) {
-            const rideCode = (this._analysis.floorMovers.get(si)?.code ?? null);
-            if (rideCode === null) {
-                this._addSurface(still, si);
+        for (const sheet of sheets) {
+            if (sheet.rideCode === null) {
+                this._addSheet(still, sheet);
                 continue;
             }
             const mesh = WadMeshBuilder.newMesh();
-            this._addSurface(mesh, si);
-            const surface = this._finish(mesh, WadLiquidSurfaces.CODE_PREFIX + si, rideCode);
+            this._addSheet(mesh, sheet);
+            const surface = this._finish(mesh, WadLiquidSurfaces.CODE_PREFIX + sheet.si, sheet.rideCode);
             if (surface !== null) {
                 built.push(surface);
             }
@@ -108,6 +111,87 @@ class WadLiquidSurfaces {
     }
 
     // --- Internal ---
+
+    _footclipOf(si) {
+        const ft = this._level.sectors[si].ft;
+
+        return ((this._bank.isLiquidFlat(ft)) ? this._terrains.footclipOf(ft) : 0);
+    }
+
+    // Sheets over a dry floor mover, which travels its vanilla course through them:
+    // a lift going down beside water, a "+change" floor rising out of its own.
+    _moverSheets() {
+        if ((this._policy.mode !== WadLiquidSurfaces.MODE_RAISE) || !this._sheets) {
+            return [];
+        }
+
+        return [...this._liftSheets(), ...this._risingChangeSheets()];
+    }
+
+    // The water of the neighbours the base cycle lands beside, all of them
+    // liquid, at their lowest line; it rides the neighbour that carries it.
+    _liftSheets() {
+        const {liftIds, liftOriginalFh, liftBaseTargetFh, liftLowestFh, liftNeighbourPoses, floorMovers} = this._analysis;
+        const sheets = [];
+        for (const si of liftIds) {
+            if ((this._surface[si] !== undefined) || !floorMovers.has(si)) {
+                continue;
+            }
+            const lowFh  = (liftBaseTargetFh[si] ?? liftLowestFh[si]);
+            const source = this._liquidSourceAt(liftNeighbourPoses[si] ?? {}, lowFh);
+            if (source === null) {
+                continue;
+            }
+            // Level with the lift's resting top, the sheet would z-fight with it.
+            const line = Math.min(this._waterLine(source), liftOriginalFh[si] - WadLiquidSurfaces.UNDER_TOP_MARGIN);
+            if (line <= lowFh) {
+                continue;
+            }
+            sheets.push({si: si, sourceSi: source, line: line, rideCode: (floorMovers.get(source)?.code ?? null), sides: false});
+        }
+
+        return sheets;
+    }
+
+    // null as soon as one neighbour at that height is dry or without a sheet.
+    _liquidSourceAt(neighbourPoses, lowFh) {
+        let source = null;
+        for (const [other, poses] of Object.entries(neighbourPoses)) {
+            if (!poses.includes(lowFh)) {
+                continue;
+            }
+            const si = Number(other);
+            if (this._surface[si] === undefined) {
+                return null;
+            }
+            if ((source === null) || (this._surface[si] < this._surface[source])) {
+                source = si;
+            }
+        }
+
+        return source;
+    }
+
+    // A dropping "+change" floor would leave its still sheet hanging in the air.
+    _risingChangeSheets() {
+        const {floorChange, risingFloorIds, risingFloorTargetFh, liftIds, floorMovers} = this._analysis;
+        const sheets = [];
+        for (const si of Object.keys(floorChange).map(Number)) {
+            if (!risingFloorIds.has(si) || liftIds.has(si) || !floorMovers.has(si)) {
+                continue;
+            }
+            const restFh = this._restFloor(si);
+            if ((risingFloorTargetFh[si] ?? Infinity) <= restFh) {
+                continue;
+            }
+            const line = Math.min(this._footclipOf(si), this._bankHeight(si));
+            if (line > 0) {
+                sheets.push({si: si, sourceSi: si, line: restFh + line, rideCode: null, sides: false});
+            }
+        }
+
+        return sheets;
+    }
 
     // Water never stands above its lowest bank: the lowest non-liquid floor
     // around the sector, the ceiling at most. A bank at floor level leaves no
@@ -179,15 +263,18 @@ class WadLiquidSurfaces {
         return (this._analysis.liftOriginalFh[si] ?? this._level.sectors[si].fh);
     }
 
-    _addSurface(mesh, si) {
-        const sec = this._level.sectors[si];
-        const ft  = this._bank.ensureFlatTex(sec.ft);
+    // The sheet covers the outline of sheet.si with the water of sheet.sourceSi.
+    _addSheet(mesh, sheet) {
+        const source = this._level.sectors[sheet.sourceSi];
+        const ft     = this._bank.ensureFlatTex(source.ft);
         if (ft < 0) {
             return;
         }
-        WadMeshBuilder.addSectorFlat(mesh, this._level, ft, si, this._waterLine(si), true, sec.light,
-            {...WadMeshBuilder.floorFlatOptions(this._level, this._bank, this._analysis, si), noDecal: true, shotOnly: true, alpha: this._policy.alpha});
-        this._buildSides(mesh, si, ft);
+        WadMeshBuilder.addSectorFlat(mesh, this._level, ft, sheet.si, sheet.line, true, source.light,
+            {...WadMeshBuilder.floorFlatOptions(this._level, this._bank, this._analysis, sheet.sourceSi), noDecal: true, shotOnly: true, alpha: this._policy.alpha});
+        if (sheet.sides) {
+            this._buildSides(mesh, sheet.si, ft);
+        }
     }
 
     // A riding sheet is a collider retransformed with its mover; the merged
@@ -220,8 +307,9 @@ class WadLiquidSurfaces {
     }
 }
 
-WadLiquidSurfaces.MODE_NONE   = 'none';
-WadLiquidSurfaces.MODE_SINK   = 'sink';
-WadLiquidSurfaces.MODE_RAISE  = 'raise';
-WadLiquidSurfaces.CODE_PREFIX = 'liquid_';
-WadLiquidSurfaces.STATIC_CODE = WadLiquidSurfaces.CODE_PREFIX + 'static';
+WadLiquidSurfaces.MODE_NONE        = 'none';
+WadLiquidSurfaces.MODE_SINK        = 'sink';
+WadLiquidSurfaces.MODE_RAISE       = 'raise';
+WadLiquidSurfaces.CODE_PREFIX      = 'liquid_';
+WadLiquidSurfaces.STATIC_CODE      = WadLiquidSurfaces.CODE_PREFIX + 'static';
+WadLiquidSurfaces.UNDER_TOP_MARGIN = 1;

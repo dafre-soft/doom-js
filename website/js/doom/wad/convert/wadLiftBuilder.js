@@ -58,9 +58,8 @@ class WadLiftBuilder extends AbstractMoverBuilder {
 
         const radius = WadMeshBuilder.xzActionRadius(mesh);
 
-        const landFh  = this._landingFh(si, minFh);
-        const travelY = (origFh - landFh) * WadConstants.SCALE;
-        const moveS   = WadConstants.moveDurationS(origFh - landFh, speed);
+        const travelY = (origFh - minFh) * WadConstants.SCALE;
+        const moveS   = WadConstants.moveDurationS(origFh - minFh, speed);
         const waitS   = WadConstants.LIFT_WAIT_TICS * WadConstants.SECONDS_PER_TIC;
 
         // Every floor-down element is driven externally (switch / walk zone).
@@ -75,10 +74,10 @@ class WadLiftBuilder extends AbstractMoverBuilder {
             // the rest position (down first, like most vanilla plats). Zero-
             // length segments (rest position AT an end of the travel) are
             // skipped to keep the keyframes strictly increasing.
-            const relLow  = -(origFh - landFh) * WadConstants.SCALE;
+            const relLow  = -(origFh - minFh) * WadConstants.SCALE;
             const relHigh = (maxFh - origFh) * WadConstants.SCALE;
-            const downS   = WadConstants.moveDurationS(origFh - landFh, speed);
-            const fullS   = WadConstants.moveDurationS(maxFh - landFh, speed);
+            const downS   = WadConstants.moveDurationS(origFh - minFh, speed);
+            const fullS   = WadConstants.moveDurationS(maxFh - minFh, speed);
             const topS    = WadConstants.moveDurationS(maxFh - origFh, speed);
             let t         = 0.0;
             keyframes = [{t: t, translate: [0, 0, 0], rotate: [0, 0, 0]}];
@@ -137,9 +136,8 @@ class WadLiftBuilder extends AbstractMoverBuilder {
         const onlyOnce = WadConstants.FLOOR_DOWN_BY_SPECIAL[this._analysis.liftSectorSpecial[si]].onlyOnce;
         const variants = {};
         for (const lowFh of live.lows) {
-            const landFh = this._landingFh(si, lowFh);
             variants[WadConstants.liftLowCycleKey(lowFh)] = {
-                keyframes: WadLiftBuilder._liftKeyframes(anim, 0, -(origFh - landFh) * SCALE, WadConstants.moveDurationS(origFh - landFh, speed), waitS),
+                keyframes: WadLiftBuilder._liftKeyframes(anim, 0, -(origFh - lowFh) * SCALE, WadConstants.moveDurationS(origFh - lowFh, speed), waitS),
                 onlyOnce:  onlyOnce,
                 loop:      false,
                 ...WadConstants.pressCycleFields(WadConstants.floorDownPressProfile(anim))
@@ -159,10 +157,9 @@ class WadLiftBuilder extends AbstractMoverBuilder {
         const SCALE = WadConstants.SCALE;
         const variants = {};
         for (const [key, lower] of Object.entries(lowers)) {
-            const landFh = this._landingFh(si, lower.targetFh);
-            const moveS  = WadConstants.moveDurationS(origFh - landFh, lower.speed);
+            const moveS = WadConstants.moveDurationS(origFh - lower.targetFh, lower.speed);
             variants[key] = {
-                keyframes: WadLiftBuilder._liftKeyframes(lower.anim, 0, -(origFh - landFh) * SCALE, moveS, waitS),
+                keyframes: WadLiftBuilder._liftKeyframes(lower.anim, 0, -(origFh - lower.targetFh) * SCALE, moveS, waitS),
                 onlyOnce:  lower.onlyOnce,
                 loop:      false,
                 ...WadConstants.pressCycleFields(WadConstants.floorDownPressProfile(lower.anim))
@@ -170,24 +167,6 @@ class WadLiftBuilder extends AbstractMoverBuilder {
         }
 
         return variants;
-    }
-
-    // The Doom family's sheet lies above vanilla's floor, which IS the water: a
-    // low end on liquid neighbours only stops at their water line, under its vanilla key.
-    _landingFh(si, lowFh) {
-        const lines = [];
-        for (const [other, poses] of Object.entries(this._analysis.liftNeighbourPoses[si] ?? {})) {
-            if (!poses.includes(lowFh)) {
-                continue;
-            }
-            const line = this._liquids.surfaceOffset(Number(other));
-            if (line === null) {
-                return lowFh;
-            }
-            lines.push(line);
-        }
-
-        return ((lines.length > 0) ? (lowFh + Math.min(...lines)) : lowFh);
     }
 
     // Timeline of the lift's own shape between two poses: a one-way lower
@@ -225,7 +204,7 @@ class WadLiftBuilder extends AbstractMoverBuilder {
         for (const [key, raise] of Object.entries(raises)) {
             const thenKey = (key + ':then');
             variants[key]     = this._buildRaiseCycle(raise, origFh, thenKey);
-            variants[thenKey] = this._buildPostRaiseCycle(si, raise, origFh, minFh, anim, speed, waitS);
+            variants[thenKey] = this._buildPostRaiseCycle(raise, origFh, minFh, anim, speed, waitS);
         }
 
         return variants;
@@ -254,12 +233,11 @@ class WadLiftBuilder extends AbstractMoverBuilder {
     // the lift's own speed. A round-trip starts and ends on the raised top, so
     // its same-variant replay is safe (first pose = last pose); a one-way
     // lower is once — its raise special re-arms it by switching cycles.
-    _buildPostRaiseCycle(si, raise, origFh, minFh, anim, speed, waitS) {
-        const SCALE  = WadConstants.SCALE;
-        const landFh = this._landingFh(si, minFh);
-        const topY   = (raise.targetFh - origFh) * SCALE;
-        const lowY   = (landFh - origFh) * SCALE;
-        const moveS  = WadConstants.moveDurationS(raise.targetFh - landFh, speed);
+    _buildPostRaiseCycle(raise, origFh, minFh, anim, speed, waitS) {
+        const SCALE = WadConstants.SCALE;
+        const topY  = (raise.targetFh - origFh) * SCALE;
+        const lowY  = (minFh - origFh) * SCALE;
+        const moveS = WadConstants.moveDurationS(raise.targetFh - minFh, speed);
 
         return {
             keyframes: WadLiftBuilder._liftKeyframes(anim, topY, lowY, moveS, waitS),
