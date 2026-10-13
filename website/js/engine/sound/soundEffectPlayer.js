@@ -19,9 +19,11 @@ class SoundEffectPlayer {
 
     /**
      * @param {SoundEngine} soundEngine
+     * @param {GainNode|null} bus - the volume bus the channels play on, the engine's effects bus by default
      */
-    constructor(soundEngine) {
+    constructor(soundEngine, bus = null) {
         this._engine      = soundEngine;
+        this._bus         = bus;
         this._channels    = [];
         this._maxChannels = SoundEffectPlayer.MAX_CHANNELS_DEFAULT;
         this._paused      = false;
@@ -69,7 +71,7 @@ class SoundEffectPlayer {
         gain.gain.value = (options.gain ?? 1);
         pan.pan.value   = SoundEffectPlayer._clampPan(options.pan ?? 0);
         gain.connect(pan);
-        pan.connect(this._engine.getEffectsBus());
+        pan.connect(this._bus ?? this._engine.getEffectsBus());
 
         const channel = {
             sample:       sample,
