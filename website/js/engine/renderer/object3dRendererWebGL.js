@@ -516,8 +516,9 @@ class Object3dRendererWebGL extends Object3dRendererBase {
                 float B  = -2.0 * u_far * u_near / (u_far - u_near);
                 gl_Position = vec4(xc, yc, A * z + B, z);
                 if (u_depthBias > 0.0) {
-                    // The depth only is pulled towards the camera, never past the near plane.
-                    float zd = max((z - u_depthBias), min(z, u_near));
+                    // The depth only is pulled towards the camera, never past the near plane: close to it, it is
+                    // squeezed rather than stopped, so the faces there keep their order.
+                    float zd = max((z - u_depthBias), min(z, (u_near + ((z - u_near) * 0.125))));
                     gl_Position.z = (A * zd + B) * z / zd;
                 }
                 v_color = a_color;
