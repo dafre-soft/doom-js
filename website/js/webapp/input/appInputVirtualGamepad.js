@@ -26,6 +26,8 @@
  *   aimSplitMarkWidth   width of the split marker, fraction of aimArea
  *   aimMarkIcon         icon name drawn on the split marker
  *   stickHints          {move: {x, y}, aim: {x, y}}, resting outline of each stick
+ *   stickRadius         finger travel to a full deflection, fraction of the display height (both sticks); a
+ *                       larger stick gives a finer control
  *   buttons             {name: {x, y, w, h, icon, toggle?, dashed?, iconScale?, allowed?}},
  *                       hit-tested in declaration order; `allowed: false` ships hidden
  *   icons               {name: {viewBox?, shapes}}, SVG drawings in a 24×24 box
@@ -276,7 +278,7 @@ class AppInputVirtualGamepad {
         this._hintEls = {};
         for (const kind in this._layout.stickHints) {
             const hint = this._createCircle();
-            hint.style.height = (AppInputVirtualGamepad.STICK_RADIUS_RATIO * 2 * 100) + '%';
+            hint.style.height = (this._layout.stickRadius * 2 * 100) + '%';
             hint.style.left   = (this._layout.stickHints[kind].x * 100) + '%';
             hint.style.top    = (this._layout.stickHints[kind].y * 100) + '%';
             hint.style.border = '0.4cqh dashed ' + this._color.hintRing;
@@ -356,7 +358,7 @@ class AppInputVirtualGamepad {
     // The knob is a CHILD of the base, so its deflection is expressed in % of
     // the base — no pixel math to render. Hidden until a finger places it.
     _createStick(overlay) {
-        const diameterPct = (AppInputVirtualGamepad.STICK_RADIUS_RATIO * 2 * 100);
+        const diameterPct = (this._layout.stickRadius * 2 * 100);
 
         const base = this._createCircle();
         base.style.height     = diameterPct + '%';
@@ -615,7 +617,7 @@ class AppInputVirtualGamepad {
     // sensitivity — the knob keeps following the finger, only the value the
     // page reads is damped.
     _updateStick(owned, px, py, rect) {
-        const radius = (rect.height * AppInputVirtualGamepad.STICK_RADIUS_RATIO);
+        const radius = (rect.height * this._layout.stickRadius);
         let nx = ((px - owned.ox) / radius);
         let ny = ((py - owned.oy) / radius);
         const mag = Math.sqrt((nx * nx) + (ny * ny));
@@ -684,7 +686,7 @@ class AppInputVirtualGamepad {
     }
 }
 
-// Stick radius (fraction of the display height) at which a stick saturates, and
+// Default stick radius (fraction of the display height) at which a stick saturates, and
 // the knob size as a fraction of the base — _setKnob derives its deflection
 // offset from that ratio.
 AppInputVirtualGamepad.STICK_RADIUS_RATIO = 0.12;
@@ -703,6 +705,7 @@ AppInputVirtualGamepad.EMPTY_LAYOUT = {
     aimSplitMarkWidth: 0,
     aimMarkIcon:       null,
     stickHints:        {},
+    stickRadius:       AppInputVirtualGamepad.STICK_RADIUS_RATIO,
     buttons:           {},
     icons:             {},
     colors:            {}
