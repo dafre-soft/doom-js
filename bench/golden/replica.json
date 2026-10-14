@@ -28,8 +28,8 @@
     "turns": 600,
     "mismatches": {},
     "subTraceSha": "d0a12be45f2a2286057020120c98fd32f838bee336a48439b3038dfdac7cf8df",
-    "subEventsSha": "52139206e36067e8cb06c6326221d324e80400e8dd59995818d77d520fd33675",
-    "subEvents": 110,
+    "subEventsSha": "4c15f1b81efa92f3d055b02ff5e1c51a3aad874bc7b1f3ee190f0284d079cec5",
+    "subEvents": 105,
     "mainTraceSha": "5248ab5c63a6a1b2916523e3dff3da3d2be33f272b22979c001b7395c41b8eed",
     "mainPlayers": [
       1,

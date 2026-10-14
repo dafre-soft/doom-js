@@ -225,7 +225,7 @@ class DoomSimulation {
         this._equip(player, restoredState);
         this._giveSpawnKeys(player.getUser());
         player.markLevelEntry();
-        player.getUser().setUseProbeDistance(WadConstants.USE_RANGE * WadConstants.SCALE);
+        player.getUser().setUseProbeDistance(WadConstants.USE_REACH);
         this._arm(player);
 
         return this;

@@ -825,6 +825,7 @@ class WadConstants {
     // Reach of a use press (p_local.h USERANGE): a press that finds no trigger
     // probes a wall this far ahead before voicing the failure.
     static USE_RANGE = 64;
+    static USE_REACH = WadConstants.USE_RANGE * WadConstants.SCALE;
 
     // Fall (in map units) beyond which landing grunts: vanilla plays *grunt at
     // momz < -8 u/tic (p_mobj.c), which gravity 1 u/tic² reaches after 32 units.

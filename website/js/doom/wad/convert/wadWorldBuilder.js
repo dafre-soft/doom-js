@@ -82,9 +82,17 @@ class WadWorldBuilder {
         const doors = new WadDoorBuilder(level, analysis, bank, animBank, liquids).buildAll();
         const builtDoorCodes = new Set();
         for (const door of doors) {
+            const useFaces = this._doorUseFaces(door, level);
+            if (useFaces !== null) {
+                // P_UseLines ignores height: the disc only pre-filters, the USE guard measures the reach.
+                door.instanceData.interactionRadius = WadMeshBuilder.xzUseRadius(door.mesh);
+                door.instanceData.interactionShape  = 'planar';
+            }
             this._registerInstance(door, bank, WadConstants.MOVER_TINT);
             builtDoorCodes.add(door.code);
-            this._applyDoorUseGuard(door, level);
+            if (useFaces !== null) {
+                this._applyDoorUseGuard(door, useFaces);
+            }
         }
         await this._yield();
 
@@ -933,7 +941,7 @@ class WadWorldBuilder {
         const ownIdx   = built.linedef;
         const own      = this._useLines()[ownIdx];
         const instance = loader.instances().getByCode(built.code);
-        const range    = WadConstants.USE_RANGE * WadConstants.SCALE;
+        const range    = WadConstants.USE_REACH;
         instance.addTriggerCondition((user) => {
             if (WadGeometry.cross2d([own.x1, own.z1], [own.x2, own.z2], [user.x, user.z]) > 0) {
                 return false;
@@ -1104,13 +1112,11 @@ class WadWorldBuilder {
         });
     }
 
-    // Vanilla USE rules are per linedef, the engine has one radius per body: the
-    // nearest two-sided face stands in for the line P_UseSpecialLine picks. It
-    // must carry a manual door special, is usable from its front only, and
-    // demands its own key. A door with no usable face (timer sector) keeps the radius.
-    _applyDoorUseGuard(built, level) {
+    // Two-sided faces of a pressable door, null when none carries a manual door
+    // special: such a door (timer sector) keeps its plain radius.
+    _doorUseFaces(built, level) {
         if (built.instanceData.trigger !== 'action') {
-            return;
+            return null;
         }
         const si = Number(built.code.split('_')[1]);
         const faces = [];
@@ -1130,10 +1136,16 @@ class WadWorldBuilder {
             faces.push({x1: x1, z1: z1, x2: x2, z2: z2,
                 usable: usable, key: ((usable) ? (door.key ?? null) : null)});
         }
-        if (!faces.some((face) => (face.usable === true))) {
-            return;
-        }
 
+        return ((faces.some((face) => (face.usable === true))) ? faces : null);
+    }
+
+    // Vanilla USE rules are per linedef, the engine has one radius per body: the
+    // nearest two-sided face stands in for the line P_UseSpecialLine picks. It
+    // must carry a manual door special, lie within the USE reach, be used from
+    // its front, and demand its own key.
+    _applyDoorUseGuard(built, faces) {
+        const reach = WadConstants.USE_REACH;
         loader.instances().getByCode(built.code).addTriggerCondition((user) => {
             let nearest = null;
             let bestSq  = Infinity;
@@ -1144,7 +1156,7 @@ class WadWorldBuilder {
                     nearest = face;
                 }
             }
-            if (nearest.usable !== true) {
+            if ((nearest.usable !== true) || (bestSq > (reach * reach))) {
                 return false;
             }
             // cross < 0 is the front (right) side.

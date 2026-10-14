@@ -88,7 +88,9 @@ class WadSwitchBuilder {
                 loop:              false,
                 onlyOnce:          false,
                 collisionShape:    geom.collisionShape,
+                // P_UseLines ignores height: the disc only pre-filters, the USE guard traces the reach.
                 interactionRadius: geom.radius,
+                interactionShape:  'planar',
                 damage:            null,
                 interaction:       switchCode,
                 // Locked-door switches (99/133-137), EV_DoLockedDoor.
@@ -174,7 +176,7 @@ class WadSwitchBuilder {
             ? this._moverSwapSpec(ld, moverCode, ti, partnerTi)
             : this._riserSwapSpec(ld, switchWall, ti, partnerTi));
 
-        return {textures: localIndices, mesh: mesh, radius: this._meshRadius(mesh), collisionShape: 'faces',
+        return {textures: localIndices, mesh: mesh, radius: WadMeshBuilder.xzUseRadius(mesh), collisionShape: 'faces',
             restIndex: restIndex, swapIndex: swapIndex, remoteSwap: remoteSwap};
     }
 
@@ -190,7 +192,7 @@ class WadSwitchBuilder {
 
     // Invisible USE zone of a switch line with no SWxxx graphic (an SR lift edge).
     _buildUseZoneGeometry(ld) {
-        const zone = WadMeshBuilder.buildLineZone(this._level, ld);
+        const zone = WadMeshBuilder.buildLineZone(this._level, ld, WadConstants.USE_REACH);
 
         return {textures: [], mesh: zone.mesh, radius: zone.radius, collisionShape: 'none'};
     }
@@ -286,18 +288,6 @@ class WadSwitchBuilder {
         }
 
         return null;
-    }
-
-    // Half the 3D bounding diagonal + margin: the trigger is 3D, centred at mid-height.
-    _meshRadius(mesh) {
-        const xs = mesh.points.map((p) => p[0]);
-        const ys = mesh.points.map((p) => p[1]);
-        const zs = mesh.points.map((p) => p[2]);
-        const dx = Math.max(...xs) - Math.min(...xs);
-        const dy = Math.max(...ys) - Math.min(...ys);
-        const dz = Math.max(...zs) - Math.min(...zs);
-
-        return Math.sqrt(dx * dx + dy * dy + dz * dz) / 2.0 + WadConstants.DOOR_ACTION_RADIUS;
     }
 
     _resolveTargets(ld) {

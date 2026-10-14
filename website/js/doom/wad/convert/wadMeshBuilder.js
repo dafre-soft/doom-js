@@ -22,10 +22,24 @@ class WadMeshBuilder {
         return Math.sqrt(dx * dx + dz * dz) / 2.0 + WadConstants.DOOR_ACTION_RADIUS;
     }
 
+    // Planar pre-filter disc of a USE target, centred like Object3d.getCenter
+    // (mean of the points): its farthest point plus the USE reach.
+    static xzUseRadius(mesh) {
+        const count = mesh.points.length;
+        const cx    = mesh.points.reduce((sum, p) => (sum + p[0]), 0) / count;
+        const cz    = mesh.points.reduce((sum, p) => (sum + p[2]), 0) / count;
+        let farthest = 0;
+        for (const p of mesh.points) {
+            farthest = Math.max(farthest, Math.hypot(p[0] - cx, p[2] - cz));
+        }
+
+        return farthest + WadConstants.USE_REACH;
+    }
+
     // Invisible trigger zone on a linedef: a one-point mesh at the line middle,
     // player-centre height, radius spanning the line + margin. The segment is
     // returned for the zones firing on a crossing (WadLineCrossing).
-    static buildLineZone(level, ld, margin = WadConstants.DOOR_ACTION_RADIUS) {
+    static buildLineZone(level, ld, margin) {
         const {vertexes, sidedefs, sectors} = level;
         const SCALE = WadConstants.SCALE;
 
