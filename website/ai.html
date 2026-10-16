@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Spipu-Doom — AI API</title>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+        <link rel="stylesheet" href="/css/main.css" />
+        <style>
+            html, body { margin: 0; padding: 0; background: #000; color: #ddd; font-family: monospace; overflow: hidden; }
+            #screen { position: fixed; inset: 0; }
+            #minimap {
+                position: fixed; top: 8px; right: 8px; width: 240px; height: 240px;
+                border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.55);
+                z-index: 10; pointer-events: none;
+            }
+            #panel {
+                position: fixed; left: 8px; bottom: 8px; z-index: 10;
+                background: rgba(0,0,0,.7); padding: 6px 8px; max-height: 40vh; overflow: auto;
+                font-size: 12px; width: 420px;
+            }
+            #panel input[type=file] { color: #aaa; }
+            #panel button { margin: 2px; }
+            #status { white-space: pre-wrap; color: #8f8; }
+        </style>
+    </head>
+    <body>
+        <div id="screen"></div>
+        <canvas id="minimap" width="240" height="240"></canvas>
+        <div id="panel">
+            <div>
+                IWAD/PWAD: <input type="file" id="wadFile" accept=".wad" />
+                <button id="btnStart">New game (skill 3)</button>
+                <select id="mapSelect"></select>
+                <button id="btnLoadMap">loadMap</button>
+            </div>
+            <div>
+                <label><input type="checkbox" id="humanInput" checked /> human input</label>
+                <label><input type="checkbox" id="showMinimap" checked /> minimap</label>
+                <span id="status">no WAD loaded</span>
+            </div>
+            <pre id="senseOut" style="margin:4px 0 0;color:#ff8;"></pre>
+        </div>
+        <script src="/js/webapp/appBootstrap.js"></script>
+        <script src="/js/ai/doomAiApi.js"></script>
+        <script>
+            appBootstrap.disablePwaMode();
+            appBootstrap.addBootstrapDefinition('/js/libBootstrap.json');
+            appBootstrap.setReadyCallback(() => {
+                DoomAiApi.install(window);
+                document.getElementById('status').textContent = 'engine ready — load a .wad file';
+
+                const wadInput   = document.getElementById('wadFile');
+                const status     = document.getElementById('status');
+                const mapSelect  = document.getElementById('mapSelect');
+
+                wadInput.addEventListener('change', async () => {
+                    const file = wadInput.files[0];
+                    if (!file) return;
+                    status.textContent = 'parsing ' + file.name + '…';
+                    try {
+                        const buffer = await file.arrayBuffer();
+                        await doom.loadIwad(buffer);
+                        status.textContent = 'loaded ' + file.name + ' (' + doom.getMaps().length + ' maps)';
+                        mapSelect.innerHTML = '';
+                        for (const m of doom.getMaps()) {
+                            const opt = document.createElement('option');
+                            opt.value = m; opt.textContent = m;
+                            mapSelect.appendChild(opt);
+                        }
+                    } catch (error) {
+                        status.textContent = 'ERROR: ' + error.message;
+                    }
+                });
+
+                document.getElementById('btnStart').addEventListener('click', async () => {
+                    if (!doom.hasIwad()) { status.textContent = 'load a WAD first'; return; }
+                    status.textContent = 'starting…';
+                    await doom.newGame(3);
+                    status.textContent = 'running on ' + doom.getCurrentMap();
+                });
+
+                document.getElementById('btnLoadMap').addEventListener('click', async () => {
+                    await doom.loadMap(mapSelect.value);
+                    status.textContent = 'map ' + mapSelect.value + ' loaded';
+                });
+
+                // --- Example AI loop driving the player through api.input ---
+                setInterval(() => {
+                    const out = document.getElementById('senseOut');
+                    if (!doom.isRunning()) { out.textContent = ''; return; }
+                    const s = doom.sense();
+                    out.textContent = JSON.stringify({
+                        hp: s.health, armor: s.armor, ammo: s.ammo, weapon: s.weapon,
+                        pos: [Math.round(s.position.x), Math.round(s.position.y)],
+                        yaw: Math.round(s.yaw), pitch: Math.round(s.pitch),
+                        visibleEnemies: s.enemies.length, totalEnemies: s.enemyCount
+                    }, null, 0);
+
+                    if (!document.getElementById('humanInput').checked) {
+                        // Trivial demo brain: face the nearest enemy and fire; walk forward.
+                        const e = s.enemies[0];
+                        let lookYaw = 0, lookPitch = 0;
+                        if (e) {
+                            const dx = e.position.x - s.position.x;
+                            const dy = e.position.y - s.position.y;
+                            const targetYaw = ((Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 360) % 360;
+                            let d = targetYaw - s.yaw;
+                            while (d > 180) d -= 360;
+                            while (d < -180) d += 360;
+                            lookYaw = Math.max(-10, Math.min(10, d));
+                        }
+                        doom.input({ moveForward: 1, moveSide: 0, lookYaw, lookPitch, fire: true, run: true });
+                    } else {
+                        doom.input(null); // release the AI override, keyboard/mouse drive again
+                    }
+                }, 35);
+
+                // --- Integrated minimap, top right corner ---
+                const mini = document.getElementById('minimap');
+                const mctx = mini.getContext('2d');
+                function drawMinimap() {
+                    if (document.getElementById('showMinimap').checked && doom.hasLevel()) {
+                        doom.drawAutomap(mctx, { width: 240, height: 240, scale: 'fit', showThings: true });
+                    } else {
+                        mctx.clearRect(0, 0, 240, 240);
+                    }
+                    requestAnimationFrame(drawMinimap);
+                }
+                drawMinimap();
+            });
+        </script>
+    </body>
+</html>
