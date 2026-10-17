@@ -359,22 +359,48 @@ class AppBootstrap {
         this.loadingFileMax     = this.appDefinition.countFiles();
         this.displayLoadingBar();
 
+        // The css and js files start downloading immediately — the game boots
+        // without waiting for the asset cache warm-up. The assets (images,
+        // json, wasm) fetch in parallel in the background; the ready callback
+        // fires once both streams landed.
         this.currentFile = 0;
-        if (this.appDefinition.getFiles('assets').length > 0) {
+        window._appBootStarted = true;
+        this._assetsPending   = (this.appDefinition.getFiles('assets').length > 0);
+        this._scriptsFinished = false;
+        if (this._assetsPending) {
             this.loadNextAsset();
-            return;
         }
         if (this.appDefinition.getFiles('css').length > 0) {
             this.loadNextCssFile();
             return;
         }
-        this.loadNextJsFile();
+        this.cssSuccess();
+    }
+
+    _assetsDone() {
+        this._assetsPending = false;
+        this._finishBootIfReady();
+    }
+
+    _scriptsDone() {
+        this._scriptsFinished = true;
+        this._finishBootIfReady();
+    }
+
+    _finishBootIfReady() {
+        if (!this._assetsPending && this._scriptsFinished) {
+            this.startApp();
+        }
     }
 
     async loadNextAsset() {
-        if (await this.loadResource(this.appDefinition.getFile('assets', this.currentFile))) {
-            this.assetSuccess();
+        // Assets only warm the cache; a failed one must never stall the boot.
+        try {
+            await this.loadResource(this.appDefinition.getFile('assets', this.currentFile));
+        } catch (error) {
+            this.logError('Asset load error', error);
         }
+        this.assetSuccess();
     }
 
     assetSuccess() {
@@ -388,11 +414,7 @@ class AppBootstrap {
         }
 
         this.currentFile = 0;
-        if (this.appDefinition.getFiles('css').length === 0) {
-            this.loadNextJsFile();
-            return;
-        }
-        this.loadNextCssFile();
+        this._assetsDone();
     }
 
     loadNextCssFile() {
@@ -472,7 +494,7 @@ class AppBootstrap {
         }
 
         this.currentFile = 0;
-        this.startApp();
+        this._scriptsDone();
     }
 
     jsSuccessBatch(count) {
@@ -480,7 +502,7 @@ class AppBootstrap {
         this.displayLoadingBar();
 
         this.currentFile = 0;
-        this.startApp();
+        this._scriptsDone();
     }
 
     jsFailed() {

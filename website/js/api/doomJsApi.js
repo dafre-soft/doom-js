@@ -107,6 +107,10 @@ class DoomJsApi {
         const resolved  = await this._resolveWadFile(options);
         const wadFile   = resolved.wadFile;
         const meta      = resolved.meta;
+        // No profile probing through the IndexedDB registry: the code comes
+        // straight from the call ({profile} / {wadId} — 'doom', 'freedoom',
+        // 'heretic', 'tnt', 'plutonia'), or is sniffed from the WAD header.
+        const profile   = new GameProfileList().getByCode(resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile));
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
             const names = wadFile.getLevelNames();
@@ -115,13 +119,13 @@ class DoomJsApi {
             }
             levelCode = names[0];
         }
-        await doomSound.loadForWad(wadFile, meta.id);
+        doomSound.loadForWad(wadFile, meta.id);
 
         const game = new DoomGame();
         this.bindGame(game);
         await game.startFromWad(wadFile, levelCode, meta, null,
             ((options.skill !== undefined) && (options.skill !== null))
-                ? options.skill : DoomSimulation.DEFAULT_SKILL);
+                ? options.skill : DoomSimulation.DEFAULT_SKILL, profile);
         if (options.maxSpeed !== undefined) {
             game.setMaxSpeed(options.maxSpeed);
         }
@@ -287,46 +291,152 @@ class DoomJsApi {
     // --- Internals ---
 
     /**
-     * @returns {Promise<{wadFile: WadFile, meta: object}>}
+     * Named editions the API can fetch by URL without any profile/registry
+     * lookup. Fill in your own local links (serve the .wad over http, e.g.
+     * put it next to the site: "/wads/doom.wad"); a file:// path is offered
+     * through the system file picker where the browser allows it.
+     */
+    static BUILT_IN_WADS = {
+        doom:      {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
+        doom1:     {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
+        doom2:     {url: '/wads/doom2.wad',      name: 'doom2.wad',      profile: 'doom'},
+        freedoom:  {url: '/wads/freedoom1.wad',  name: 'freedoom1.wad',  profile: 'freedoom'},
+        heretic:   {url: '/wads/heretic.wad',    name: 'heretic.wad',    profile: 'heretic'},
+        tnt:       {url: '/wads/tnt.wad',        name: 'tnt.wad',        profile: 'tnt'},
+        plutonia:  {url: '/wads/plutonia.wad',   name: 'plutonia.wad',   profile: 'plutonia'}
+    };
+
+    /**
+     * @returns {Promise<{wadFile: WadFile, meta: object, profileCode?: string}>}
      */
     async _resolveWadFile(options) {
+        // 1. A raw ArrayBuffer handed over directly.
         if (options.arrayBuffer !== undefined) {
             return {
                 wadFile: new WadFile(options.arrayBuffer).parse(),
-                meta:    {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'}
+                meta:    {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'},
+                profileCode: DoomJsApi._profileCodeOption(options)
             };
         }
-        const registry = await new WadRegistry(new WadStorage()).init();
 
-        // A numeric wadId is a stored record's id; 'doom', 'heretic', ... are
-        // not: they match the known editions by name/title, then the url.
-        let wanted = String(options.wadId ?? '');
-        if (wanted === '') {
-            if (options.url === undefined) {
-                throw new Error('doomApi.launch: pass {wadId}, {arrayBuffer} or {url}');
+        // 2. A link to the .wad file — http(s), or file:// when the page runs
+        // from the filesystem. No profiles, no IndexedDB registry: fetch and parse.
+        const url = options.url ?? options.path ?? options.file;
+        if ((url !== undefined) && (url !== null)) {
+            const wanted = DoomJsApi._profileCodeOption(options);
+            if (String(url).toLowerCase().startsWith('file://')) {
+                const buffer = await DoomJsApi._readFileUrl(url);
+
+                return {
+                    wadFile: new WadFile(buffer).parse(),
+                    meta:    {id: wanted ?? 'file', name: DoomJsApi._fileNameOf(url)},
+                    profileCode: wanted
+                };
             }
-            const wadImport = await registry.addFromUrl(options.url);
 
-            return {wadFile: await registry.getWadFile(wadImport.meta.id), meta: wadImport.meta};
+            return {
+                wadFile: await this._fetchWadFile(url),
+                meta:    {id: wanted ?? 'url', name: DoomJsApi._fileNameOf(url)},
+                profileCode: wanted
+            };
         }
 
+        // 3. Named editions load straight from /assets/uzdoom/<id>/ — again
+        // without touching the stored-WAD registry.
+        const wanted = String(options.wadId ?? '').toLowerCase();
+        const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
+        if ((builtIn !== undefined) && (builtIn !== null)) {
+            return {
+                wadFile: await this._fetchWadFile(builtIn.url),
+                meta:    {id: wanted, name: builtIn.name},
+                profileCode: builtIn.profile
+            };
+        }
+
+        // 4. Anything else: a WAD previously imported into storage, by id or title.
+        const registry = await new WadRegistry(new WadStorage()).init();
         const list = await registry.getList();
-        const lower = wanted.toLowerCase();
         const match = list.find((meta) => String(meta.id) === wanted)
-            ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(lower))
-            ?? list.find((meta) => String(meta.title ?? '').toLowerCase().includes(lower))
-            ?? list[0]
+            ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(wanted))
+            ?? list.find((meta) => String(meta.title ?? '').toLowerCase().includes(wanted))
             ?? null;
         if ((match === null) || (match.id === undefined)) {
-            if (options.url !== undefined) {
-                const wadImport = await registry.addFromUrl(options.url);
-
-                return {wadFile: await registry.getWadFile(wadImport.meta.id), meta: wadImport.meta};
-            }
-            throw new Error('doomApi.launch: no WAD stored with id "' + wanted + '" — import one first, or pass {arrayBuffer} / {url}');
+            throw new Error('doomApi.launch: no WAD for "' + wanted + '" — pass {url: "…/game.wad"} (http/file link) or one of: '
+                + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
         }
 
-        return {wadFile: await registry.getWadFile(match.id), meta: match};
+        return {wadFile: await registry.getWadFile(match.id), meta: match, profileCode: DoomJsApi._profileCodeOption(options)};
+    }
+
+    /**
+     * @param {string} url - http(s) link to a .wad
+     * @returns {Promise<WadFile>}
+     */
+    async _fetchWadFile(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error('doomApi.launch: HTTP ' + response.status + ' on ' + url);
+        }
+
+        return new WadFile(await response.arrayBuffer()).parse();
+    }
+
+    static _profileCodeOption(options) {
+        const code = options.profile ?? options.gameProfile ?? null;
+
+        return ((code !== null) ? String(code).toLowerCase() : null);
+    }
+
+    static _fileNameOf(url) {
+        try {
+            return new URL(url, window.location.href).pathname.split('/').pop() || url;
+        } catch (error) {
+            return String(url);
+        }
+    }
+
+    /**
+     * Read a file:// URL through the File System Access API (showOpenFilePicker
+     * only works over https/localhost). Throws a guiding error otherwise.
+     *
+     * @param {string} fileUrl
+     * @returns {Promise<ArrayBuffer>}
+     */
+    static async _readFileUrl(fileUrl) {
+        if ((window.showOpenFilePicker !== undefined) && (window.showOpenFilePicker !== null)) {
+            const ext = (fileUrl.toLowerCase().endsWith('.iwad') ? 'iwad' : 'wad');
+            const [handle] = await window.showOpenFilePicker({
+                types: [{description: 'WAD', accept: {'application/octet-stream': ['.' + ext, '.wad', '.pk3']}}]
+            });
+            const file = await handle.getFile();
+
+            return await file.arrayBuffer();
+        }
+
+        throw new Error('doomApi.launch: cannot open "' + fileUrl + '" — browsers forbid reading file:// from an http page. Serve the .wad over http and pass {url: "/path/game.wad"}, or hand over {arrayBuffer}.');
+    }
+
+    /**
+     * Guess the game family from the level lump names when no profile code was
+     * given: E1Mx lumps are the Doom I format, MAPxx the Doom II one, HEXMAPx
+     * Heretic's.
+     *
+     * @param {WadFile} wadFile
+     * @returns {string|null}
+     */
+    static sniffProfileCode(wadFile) {
+        const names = wadFile.getLevelNames();
+        if (names.some((name) => /^HEXMAP/i.test(name))) {
+            return 'heretic';
+        }
+        if (names.some((name) => /^E\dM\d$/i.test(name))) {
+            return 'doom';
+        }
+        if (names.some((name) => /^MAP\d\d$/i.test(name))) {
+            return 'doom';
+        }
+
+        return null;
     }
 
     _requireGame() {
