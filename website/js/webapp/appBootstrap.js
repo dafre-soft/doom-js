@@ -166,6 +166,47 @@ class AppBootstrap {
             }
             await AppBootstrap._appendScriptTag(url);
             loaded.add(url);
+            AppBootstrap._publishGlobals(url);
+        }
+    }
+
+    /**
+     * After a file executed, mirror its top-level `class Foo`/`const Foo`/
+     * `let Foo` declarations onto window, so later files can safely write
+     * `extends window.Foo`. A script tag's top-level lexical bindings live in
+     * the shared global lexical environment and are NOT visible as window
+     * properties; without this bridge `window.DefaultGameProfile` stays
+     * undefined even after defaultGameProfile.js ran, and subclasses die with
+     * "class heritage window.X is not an object or null".
+     */
+    static _publishGlobals(url) {
+        try {
+            if (!(url.endsWith('.js') || url.includes('.js?'))) {
+                return;
+            }
+            fetch(url, {credentials: 'same-origin'})
+                .then((response) => response.ok ? response.text() : '')
+                .then((source) => {
+                    if (!source) {
+                        return;
+                    }
+                    const pattern = /^(?:class|const|let)\s+([A-Za-z_$][\w$]*)/gm;
+                    let match;
+                    while ((match = pattern.exec(source)) !== null) {
+                        const name = match[1];
+                        if (Object.prototype.hasOwnProperty.call(window, name)) {
+                            continue;   // already a real window property
+                        }
+                        try {
+                            window[name] = eval(name);
+                        } catch (error) {
+                            // TDZ / not accessible from here — harmless, skip.
+                        }
+                    }
+                })
+                .catch(() => {});
+        } catch (error) {
+            // Never let the bridge break the boot.
         }
     }
 
