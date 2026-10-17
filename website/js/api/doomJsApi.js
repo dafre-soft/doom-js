@@ -968,22 +968,30 @@ class DoomJsApi {
             }
             this._rememberServer(base);
             const registered = [];
+            const cachedMeta = await DoomJsApi._cachedMetaMap().catch(() => new Map());
             for (const entry of (data?.wads ?? [])) {
                 if (!entry.ok || !entry.file) {
                     continue;
                 }
-                const key = String(entry.name).toLowerCase();
-                // Register BOTH spellings: the plain file name ('duom') and a
-                // server-prefixed alias ('srv-duom') so a launch({wadId}) never
-                // collides with the built-in names (doom/heretic/…) it shadows.
-                const alias = 'srv-' + key;
-                DoomJsApi.BUILT_IN_WADS[key] = {
-                    urls: [base + encodeURI(entry.file), base + '/wad/' + encodeURIComponent(entry.fileName)],
-                    name: entry.fileName,
+                const key   = String(entry.name).toLowerCase();
+                const urls  = [base + entry.file, base + '/wad/' + encodeURIComponent(entry.fileName)];
+                // A WAD already sitting in browser storage needs no URL at all:
+                // launch() reads it straight from IndexedDB, offline and instant.
+                const stored = cachedMeta.get(entry.fileName.toLowerCase())
+                    ?? cachedMeta.get(key + '.wad')
+                    ?? cachedMeta.get('srv-' + key + '.wad') ?? null;
+                const record = {
+                    local: (stored !== null) ? ('browser-storage:' + stored.name) : undefined,
+                    urls:  urls,
+                    name:  entry.fileName,
                     profile: entry.profile ?? null,
                     levels: entry.levels ?? []
                 };
-                DoomJsApi.BUILT_IN_WADS[alias] = DoomJsApi.BUILT_IN_WADS[key];
+                // Register BOTH spellings: the plain file name ('duom') and a
+                // server-prefixed alias ('srv-duom') so a launch({wadId}) never
+                // collides with the built-in names (doom/heretic/…) it shadows.
+                DoomJsApi.BUILT_IN_WADS[key]       = record;
+                DoomJsApi.BUILT_IN_WADS['srv-' + key] = record;
                 registered.push(entry.name);
             }
             console.info('doomApi.addWadFromServer: registered ' + registered.length
@@ -1085,7 +1093,11 @@ class DoomJsApi {
     static _candidateUrls(entry) {
         const out = [];
         for (const u of (entry.urls ?? [])) {
-            if ((typeof u === 'string') && (u.startsWith('/') || /^https?:/.test(u))) {
+            if ((typeof u === 'string') && /^https?:/.test(u)) {
+                out.push(u);
+                continue;
+            }
+            if ((typeof u === 'string') && u.startsWith('/')) {
                 out.push(u);
                 continue;
             }
@@ -1276,6 +1288,21 @@ class DoomJsApi {
         }
 
         return null;
+    }
+
+    /** @returns {Promise<Map<string, object>>} stored WAD metadata by lower-cased name */
+    static async _cachedMetaMap() {
+        if (window.WadStorage === undefined) {
+            return new Map();
+        }
+        const storage = new (window.WadStorage)();
+        await storage.open();
+        const map = new Map();
+        for (const meta of await storage.listMeta()) {
+            map.set(String(meta.name ?? '').toLowerCase(), meta);
+        }
+
+        return map;
     }
 
     /** Store a raw ArrayBuffer in browser storage under an exact name — the
