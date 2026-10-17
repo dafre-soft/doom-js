@@ -3032,10 +3032,10 @@ class AbstractMoverBuilder {
     }
 }
 
-// Part 2: hoisted bindings — declared with `var` here, assigned below when
-// their own files are evaluated (later batches). Nothing touches them before
-// launch()/menu use, which always happens after the whole boot is done.
-var DoomGame;
-var GameProfileList;
-var WadStorage;
-var WadRegistry;
+// Part 2: the placeholder bindings. Every other file declares its classes in
+// its own scope, so nothing is hoisted here — the bootstrap runs the whole js
+// list strictly in manifest order (parallel fetch, ordered insertion), which
+// guarantees a base class exists before any file extends it. The prelude only
+// carries the bases that used to crash when batches raced each other; those
+// five files are out of the manifest now, so nothing redeclares them.
+
