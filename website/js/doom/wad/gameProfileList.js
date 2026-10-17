@@ -39,7 +39,9 @@ class GameProfileList {
     // doom-format WAD) instead of crashing the whole launch.
     static _make(name) {
         try {
-            const Ctor = globalThis[name];
+            // The boot publishes every class on window (shim interop); reading it
+            // there is TDZ-safe even while the declaring file is still evaluating.
+            const Ctor = (typeof window !== 'undefined' ? window[name] : undefined) ?? globalThis[name];
             if (typeof Ctor === 'function') {
                 return new Ctor();
             }
@@ -47,7 +49,9 @@ class GameProfileList {
             console.warn('GameProfileList: profile "' + name + '" not ready yet', error);
         }
 
-        return new DefaultGameProfile();
+        return (typeof DefaultGameProfile === 'function')
+            ? new DefaultGameProfile()
+            : new window.DefaultGameProfile();
     }
 
     static _byCode() {
@@ -81,7 +85,9 @@ class GameProfileList {
     }
 
     _fallback() {
-        return new DefaultGameProfile();
+        return (typeof DefaultGameProfile === 'function')
+            ? new DefaultGameProfile()
+            : new window.DefaultGameProfile();
     }
 
     /**
@@ -126,4 +132,9 @@ class GameProfileList {
     getAll() {
         return [...this._profiles(), this._fallback()];
     }
+}
+
+// Publish for the boot shims and early console callers (TDZ-safe window lookup).
+if ((typeof window !== 'undefined') && (window.GameProfileList === undefined)) {
+    window.GameProfileList = GameProfileList;
 }

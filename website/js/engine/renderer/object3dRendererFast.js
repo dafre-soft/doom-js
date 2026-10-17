@@ -1,4 +1,4 @@
-class Object3dRendererFast extends Object3dRendererBase {
+class Object3dRendererFast extends window.Object3dRendererBase {
     get code() {
         return 'fast';
     }
@@ -43,3 +43,12 @@ Object3dRendererFast.FILL_COLOR       = [250, 250, 250];
 Object3dRendererFast.FILL_ALPHA       = 0.7;
 Object3dRendererFast.LINE_COLOR       = '#222222';
 Object3dRendererFast.TINT_EDGE_FACTOR = 0.4;
+
+// Publish for the boot shims / late evaluators; merge into a stand-in if one exists.
+if ((typeof window !== 'undefined') && (window.Object3dRendererFast !== undefined) && (window.Object3dRendererFast !== Object3dRendererFast)) {
+    Object.assign(window.Object3dRendererFast.prototype, Object3dRendererFast.prototype);
+    Object.getOwnPropertyNames(Object3dRendererFast).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.Object3dRendererFast[k] = Object3dRendererFast[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.Object3dRendererFast = Object3dRendererFast;
+}

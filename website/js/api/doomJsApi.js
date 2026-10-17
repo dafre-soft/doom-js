@@ -128,7 +128,8 @@ class DoomJsApi {
         let profile = null;
         if (options.raw !== true) {
             const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
-            const list       = ((typeof GameProfileList === 'function') ? new GameProfileList() : null);
+            const ListCtor   = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
+        const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
             profile          = ((list !== null) ? list.getByCode(wantedCode) : null);
             if ((profile === null) || (wantedCode === null)) {
                 // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
@@ -136,7 +137,8 @@ class DoomJsApi {
             }
         }
         if ((profile === null) || (profile === undefined)) {
-            profile = new DefaultGameProfile();
+            const ProfileCtor = (typeof DefaultGameProfile === 'function') ? DefaultGameProfile : window.DefaultGameProfile;
+            profile = new ProfileCtor();
         }
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
@@ -150,14 +152,15 @@ class DoomJsApi {
             doomSound.loadForWad(wadFile, meta.id);
         }
 
-        const game = new DoomGame();
+        const GameCtor = (typeof DoomGame === 'function') ? DoomGame : window.DoomGame;
+        const game = new GameCtor();
         this.bindGame(game);
         // The level's own sounds and music start with the level: a launch from
         // the console must not wait for the menu flow that normally does it.
         game.startSoundsForWad(wadFile, meta.id);
         await game.startFromWad(wadFile, levelCode, meta, null,
             ((options.skill !== undefined) && (options.skill !== null))
-                ? options.skill : DoomSimulation.DEFAULT_SKILL, profile);
+                ? options.skill : ((typeof DoomSimulation === 'object' || typeof DoomSimulation === 'function') ? DoomSimulation.DEFAULT_SKILL : window.DoomSimulation.DEFAULT_SKILL), profile);
         if (options.maxSpeed !== undefined) {
             game.setMaxSpeed(options.maxSpeed);
         }
@@ -324,16 +327,21 @@ class DoomJsApi {
 
     /**
      * Named editions the API can fetch by URL without any profile/registry
-     * lookup. Fill in your own local links (serve the .wad over http, e.g.
-     * put it next to the site: "/wads/doom.wad"); a file:// path is offered
-     * through the system file picker where the browser allows it.
+     * lookup — plain links to .wad files. The default set points at the
+     * canonical FreeDOOM release URLs (CORS-enabled), so launch({wadId:'doom'})
+     * works out of the box with no local files and no IndexedDB profiles.
+     * Override locally: doomApi.addWad('doom', '/wads/doom1.wad') or edit
+     * doomApi.WADS directly; an unknown wadId also falls back to
+     * '/wads/<id>.wad' served next to the site.
      */
     static BUILT_IN_WADS = {
-        doom:      {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
-        doom1:     {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
-        doom2:     {url: '/wads/doom2.wad',      name: 'doom2.wad',      profile: 'doom'},
-        freedoom:  {url: '/wads/freedoom1.wad',  name: 'freedoom1.wad',  profile: 'freedoom'},
-        heretic:   {url: '/wads/heretic.wad',    name: 'heretic.wad',    profile: 'heretic'},
+        doom:      {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        doom1:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        doom2:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
+        freedoom:  {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        freedoom1: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        freedoom2: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
+        heretic:   {url: 'https://github.com/zsniper/heretic-sdpa-release/raw/master/heretic.wad',                             name: 'heretic.wad',       profile: 'heretic'},
         tnt:       {url: '/wads/tnt.wad',        name: 'tnt.wad',        profile: 'tnt'},
         plutonia:  {url: '/wads/plutonia.wad',   name: 'plutonia.wad',   profile: 'plutonia'}
     };
@@ -345,7 +353,7 @@ class DoomJsApi {
         // 1. A raw ArrayBuffer handed over directly.
         if (options.arrayBuffer !== undefined) {
             return {
-                wadFile: new WadFile(options.arrayBuffer).parse(),
+                wadFile: new (window.WadFile)(options.arrayBuffer).parse(),
                 meta:    {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'},
                 profileCode: DoomJsApi._profileCodeOption(options)
             };
@@ -360,7 +368,7 @@ class DoomJsApi {
                 const buffer = await DoomJsApi._readFileUrl(url);
 
                 return {
-                    wadFile: new WadFile(buffer).parse(),
+                    wadFile: new (window.WadFile)(buffer).parse(),
                     meta:    {id: wanted ?? 'file', name: DoomJsApi._fileNameOf(url)},
                     profileCode: wanted
                 };
@@ -373,9 +381,9 @@ class DoomJsApi {
             };
         }
 
-        // 3. Named editions load straight from the served /wads/ folder — no
-        // profiles registry, no IndexedDB: fetch the link and parse it. The
-        // table is editable at runtime: doomApi.addWad('my.wad', '/wads/my.wad', 'doom').
+        // 3. Named editions load straight from a link — no profiles registry,
+        // no IndexedDB: fetch the .wad and parse it (BUILT_IN_WADS table,
+        // editable at runtime with doomApi.addWad(name, url, profileCode)).
         const wanted = String(options.wadId ?? '').toLowerCase();
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
@@ -386,10 +394,23 @@ class DoomJsApi {
             };
         }
 
-        // 4. Anything else: a WAD previously imported into storage, by id or title.
+        // 4. Unknown short name: try '/wads/<name>.wad' served next to the site.
+        if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
+            try {
+                return {
+                    wadFile: await this._fetchWadFile('/wads/' + wanted + '.wad'),
+                    meta:    {id: wanted, name: wanted + '.wad'},
+                    profileCode: DoomJsApi._profileCodeOption(options)
+                };
+            } catch (error) {
+                console.warn('doomApi.launch: /wads/' + wanted + '.wad not available', error);
+            }
+        }
+
+        // 5. Anything else: a WAD previously imported into storage, by id or title.
         let match = null;
         try {
-            const registry = await new WadRegistry(new WadStorage()).init();
+            const registry = await new (window.WadRegistry)(new (window.WadStorage)()).init();
             const list = await registry.getList();
             match = list.find((meta) => String(meta.id) === wanted)
                 ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(wanted))
@@ -433,7 +454,7 @@ class DoomJsApi {
             throw new Error('doomApi.launch: HTTP ' + response.status + ' on ' + url);
         }
 
-        return new WadFile(await response.arrayBuffer()).parse();
+        return new (window.WadFile)(await response.arrayBuffer()).parse();
     }
 
     static _profileCodeOption(options) {

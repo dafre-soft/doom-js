@@ -3,7 +3,7 @@
  * behaviour as the id Doom II profile with its own level names; its finale
  * texts (P1TEXT…) are not transcribed, so its chapter ends stay silent.
  */
-class PlutoniaGameProfile extends DoomGameProfile {
+class PlutoniaGameProfile extends window.DoomGameProfile {
     getCode() {
         return 'plutonia';
     }
@@ -62,4 +62,13 @@ class PlutoniaGameProfile extends DoomGameProfile {
             MAP32: 'Go 2 It'
         };
     }
+}
+
+// Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
+if ((typeof window !== 'undefined') && (window.PlutoniaGameProfile !== undefined) && (window.PlutoniaGameProfile !== PlutoniaGameProfile)) {
+    Object.assign(window.PlutoniaGameProfile.prototype, PlutoniaGameProfile.prototype);
+    Object.getOwnPropertyNames(PlutoniaGameProfile).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.PlutoniaGameProfile[k] = PlutoniaGameProfile[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.PlutoniaGameProfile = PlutoniaGameProfile;
 }

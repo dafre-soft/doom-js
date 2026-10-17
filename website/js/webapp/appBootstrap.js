@@ -132,61 +132,63 @@ class AppBootstrap {
     }
 
     /**
-     * Fetch every listed script concurrently (one shared HTTP budget), then
-     * run them strictly in list order by injecting the source text into the
-     * global scope with an indirect eval — synchronous, in-order execution, so
-     * no file ever evaluates before its dependencies. Indirect eval keeps the
-     * code in the GLOBAL scope: top-level 'class'/'let' declarations behave
-     * exactly like classic script tags.
+     * Load every listed script through <script src> tags appended one per
+     * previous script's onload. This is the classic loading mode: each file
+     * executes as a SEPARATE SCRIPT whose top-level `class`/`let` bindings
+     * live in the shared global lexical environment — exactly like the app was
+     * designed for. Eval-based loaders cannot be used here: every eval call
+     * creates its OWN declarative environment, so two files declaring the same
+     * name ("redeclaration of let Object3d") or a file reading a binding a
+     * later eval block will define would both crash the boot.
      *
-     * Idempotence: a page reload that keeps the JS context (PWA update flow,
-     * soft reload) would re-evaluate every class and die on "redeclaration of
-     * let/class" — remember what already ran. The guard is a plain property on
-     * window: bare identifiers inside the eval'd scripts resolve through the
-     * real global lexical scope, which does NOT see properties added via
-     * `window.x` when a same-realm binding shadows them — so it is read and
-     * written directly here, never from inside an injected script.
+     * Speed: all the downloads are fired at once (the browser's HTTP/2 budget
+     * fetches the ~300 files in parallel); only EXECUTION waits for the strict
+     * list order, so no file ever runs before its dependencies.
+     *
+     * Idempotence: a soft reload that keeps the JS context (PWA update flow)
+     * would re-execute every class and die on "redeclaration"; remember what
+     * already ran in this context and skip it.
      */
     static async loadScriptsInOrder(urls) {
-        // Fully async: every file starts executing the moment its own text
-        // arrived — no waiting for the whole batch. The chain below keeps the
-        // STRICT list order for execution: script N+1 runs only after script N
-        // finished evaluating, while all the downloads already race in
-        // parallel on the shared HTTP budget.
-        const globalEval = eval;
-
         window.__doomLoadedScripts ??= new Set();
         const loaded = window.__doomLoadedScripts;
 
-        let chain = Promise.resolve();
-        const tasks = urls.map((url) => {
-            const download = AppBootstrap._fetchScriptText(url);
+        // Fire every download now — they race in parallel while we execute.
+        for (const url of urls) {
+            if (!loaded.has(url)) {
+                AppBootstrap._prefetchScript(url);
+            }
+        }
 
-            chain = chain.then(async () => {
-                if (loaded.has(url)) {
-                    return;     // already evaluated in this JS context
-                }
-                const source = await download;
-                if (source === null) {
-                    console.error('AppBootstrap - failed to fetch script ' + url);
-
-                    return;     // a failed download: skip, keep the order of the rest
-                }
-                try {
-                    loaded.add(url);
-                    globalEval(source + "\n//# sourceURL=" + url);
-                } catch (error) {
-                    console.error('AppBootstrap - error executing script ' + url, error);
-                }
-            });
-
-            return chain;
-        });
-        await Promise.all(tasks);
+        for (const url of urls) {
+            if (loaded.has(url)) {
+                continue;       // already executed in this JS context
+            }
+            await AppBootstrap._appendScriptTag(url);
+            loaded.add(url);
+        }
     }
 
-    static _fetchScriptText(url) {
-        return fetch(url).then((response) => ((response.ok) ? response.text() : null)).catch(() => null);
+    static _prefetchScript(url) {
+        // Best effort: prime the HTTP cache so the <script src> tag lands instantly.
+        try {
+            fetch(url, {credentials: 'same-origin'}).catch(() => {});
+        } catch (error) {
+        }
+    }
+
+    static _appendScriptTag(url) {
+        return new Promise((resolve) => {
+            let htmlTag = document.createElement('script');
+            htmlTag.setAttribute('type', 'text/javascript');
+            htmlTag.setAttribute('src', url);
+            htmlTag.onload  = () => resolve();
+            htmlTag.onerror = () => {
+                console.error('AppBootstrap - failed to load script ' + url);
+                resolve();      // keep the boot going, report at the end
+            };
+            document.body.appendChild(htmlTag);
+        });
     }
 
     /** @type {int}           */ currentFile;

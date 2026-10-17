@@ -3,7 +3,13 @@
  * the default profile, plus the id episode and level names, finale texts and
  * level patches.
  */
-class DoomGameProfile extends DefaultGameProfile {
+// Boot-shim interop: js/boot/shim-gameProfiles.js may have put a stand-in on
+// window.DoomGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
+// before their base class landed). Merge the real body into that constructor so
+// every early `extends DoomGameProfile` keeps working; otherwise declare it normally.
+window.__DoomGameProfileDefined = true;
+const DoomGameProfile__Real = class DoomGameProfile extends window.DefaultGameProfile {
+
     getCode() {
         return 'doom';
     }
@@ -110,4 +116,16 @@ class DoomGameProfile extends DefaultGameProfile {
             MAP32: 'Grosse'
         };
     }
+}
+
+if ((typeof window !== 'undefined') && (window.DoomGameProfile !== undefined)
+    && (window.DoomGameProfile !== DoomGameProfile__Real)) {
+    Object.assign(window.DoomGameProfile.prototype, DoomGameProfile__Real.prototype);
+    Object.getOwnPropertyNames(DoomGameProfile__Real)
+        .filter((k) => !['length', 'name', 'prototype'].includes(k))
+        .forEach((k) => { try { window.DoomGameProfile[k] = DoomGameProfile__Real[k]; } catch (e) {} });
+    Object.getOwnPropertyNames(DoomGameProfile__Real.prototype)
+        .forEach((k) => { try { window.DoomGameProfile.prototype[k] = DoomGameProfile__Real.prototype[k]; } catch (e) {} });
+} else if ((typeof window === 'undefined') || (window.DoomGameProfile === undefined)) {
+    window.DoomGameProfile = DoomGameProfile__Real;
 }

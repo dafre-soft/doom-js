@@ -8,7 +8,13 @@
  * and its catalogs (things, weapons, ammo, items, loadout, HUD layout) are
  * the vanilla Doom ones.
  */
-class DefaultGameProfile extends AbstractGameProfile {
+// Boot-shim interop: js/boot/shim-gameProfiles.js may have put a stand-in on
+// window.DefaultGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
+// before their base class landed). Merge the real body into that constructor so
+// every early `extends DefaultGameProfile` keeps working; otherwise declare it normally.
+window.__DefaultGameProfileDefined = true;
+const DefaultGameProfile__Real = class DefaultGameProfile extends window.AbstractGameProfile {
+
     getCode() {
         return 'default';
     }
@@ -1301,7 +1307,7 @@ class DefaultGameProfile extends AbstractGameProfile {
     // The animated floors of p_spec.c are all liquids but the RROCK rock —
     // UZDoom keeps no terrain table for Doom, so this is the vanilla list.
     terrainFlats() {
-        return AbstractGameProfile.terrainGroup('liquid', [
+        return this.terrainGroup('liquid', [
             'NUKAGE1', 'NUKAGE2', 'NUKAGE3',
             'FWATER1', 'FWATER2', 'FWATER3', 'FWATER4',
             'SWATER1', 'SWATER2', 'SWATER3', 'SWATER4',
@@ -1465,3 +1471,15 @@ DefaultGameProfile.MAP_MUSIC = [
 DefaultGameProfile.E4_MUSIC_REUSE = [
     'D_E3M4', 'D_E3M2', 'D_E3M3', 'D_E1M5', 'D_E2M7', 'D_E2M4', 'D_E2M6', 'D_E2M5', 'D_E1M9'
 ];
+
+if ((typeof window !== 'undefined') && (window.DefaultGameProfile !== undefined)
+    && (window.DefaultGameProfile !== DefaultGameProfile__Real)) {
+    Object.assign(window.DefaultGameProfile.prototype, DefaultGameProfile__Real.prototype);
+    Object.getOwnPropertyNames(DefaultGameProfile__Real)
+        .filter((k) => !['length', 'name', 'prototype'].includes(k))
+        .forEach((k) => { try { window.DefaultGameProfile[k] = DefaultGameProfile__Real[k]; } catch (e) {} });
+    Object.getOwnPropertyNames(DefaultGameProfile__Real.prototype)
+        .forEach((k) => { try { window.DefaultGameProfile.prototype[k] = DefaultGameProfile__Real.prototype[k]; } catch (e) {} });
+} else if ((typeof window === 'undefined') || (window.DefaultGameProfile === undefined)) {
+    window.DefaultGameProfile = DefaultGameProfile__Real;
+}

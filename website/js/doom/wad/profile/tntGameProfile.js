@@ -3,7 +3,7 @@
  * behaviour as the id Doom II profile with its own level names; its finale
  * texts (T1TEXT…) are not transcribed, so its chapter ends stay silent.
  */
-class TntGameProfile extends DoomGameProfile {
+class TntGameProfile extends window.DoomGameProfile {
     getCode() {
         return 'tnt';
     }
@@ -62,4 +62,13 @@ class TntGameProfile extends DoomGameProfile {
             MAP32: 'Caribbean'
         };
     }
+}
+
+// Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
+if ((typeof window !== 'undefined') && (window.TntGameProfile !== undefined) && (window.TntGameProfile !== TntGameProfile)) {
+    Object.assign(window.TntGameProfile.prototype, TntGameProfile.prototype);
+    Object.getOwnPropertyNames(TntGameProfile).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.TntGameProfile[k] = TntGameProfile[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.TntGameProfile = TntGameProfile;
 }

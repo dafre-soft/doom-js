@@ -10,7 +10,13 @@
  * divergences. GameProfileList.getForWad picks the profile through matchesWad
  * (GZDoom iwadinfo approach: each game is recognized by lumps only it carries).
  */
-class AbstractGameProfile {
+// Boot-shim interop: js/boot/shim-abstractGameProfile.js may have put a stand-in on
+// window.AbstractGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
+// before their base class landed). Merge the real body into that constructor so
+// every early `extends AbstractGameProfile` keeps working; otherwise declare it normally.
+window.__AbstractGameProfileDefined = true;
+const AbstractGameProfile__Real = class AbstractGameProfile {
+
     /**
      * Identifier of the game this profile implements.
      *
@@ -619,7 +625,7 @@ class AbstractGameProfile {
      * @param {string[]} flats
      * @returns {object}
      */
-    static terrainGroup(terrain, flats) {
+    terrainGroup(terrain, flats) {
         const entries = {};
         for (const name of flats) {
             entries[name] = terrain;
@@ -860,3 +866,15 @@ class AbstractGameProfile {
 }
 
 AbstractGameProfile._playerBodies = new Map();   // body data → its DoomMonsterDef
+
+if ((typeof window !== 'undefined') && (window.AbstractGameProfile !== undefined)
+    && (window.AbstractGameProfile !== AbstractGameProfile__Real)) {
+    Object.assign(window.AbstractGameProfile.prototype, AbstractGameProfile__Real.prototype);
+    Object.getOwnPropertyNames(AbstractGameProfile__Real)
+        .filter((k) => !['length', 'name', 'prototype'].includes(k))
+        .forEach((k) => { try { window.AbstractGameProfile[k] = AbstractGameProfile__Real[k]; } catch (e) {} });
+    Object.getOwnPropertyNames(AbstractGameProfile__Real.prototype)
+        .forEach((k) => { try { window.AbstractGameProfile.prototype[k] = AbstractGameProfile__Real.prototype[k]; } catch (e) {} });
+} else if ((typeof window === 'undefined') || (window.AbstractGameProfile === undefined)) {
+    window.AbstractGameProfile = AbstractGameProfile__Real;
+}

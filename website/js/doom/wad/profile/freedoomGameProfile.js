@@ -3,7 +3,7 @@
  * behaviour as the id Doom baseline, except the art shades that differ in
  * the Freedoom asset set (bluish BFG lightning instead of green).
  */
-class FreedoomGameProfile extends DefaultGameProfile {
+class FreedoomGameProfile extends window.DefaultGameProfile {
     getCode() {
         return 'freedoom';
     }
@@ -30,4 +30,13 @@ class FreedoomGameProfile extends DefaultGameProfile {
     bfgDecalShade() {
         return [128, 128, 255];
     }
+}
+
+// Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
+if ((typeof window !== 'undefined') && (window.FreedoomGameProfile !== undefined) && (window.FreedoomGameProfile !== FreedoomGameProfile)) {
+    Object.assign(window.FreedoomGameProfile.prototype, FreedoomGameProfile.prototype);
+    Object.getOwnPropertyNames(FreedoomGameProfile).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.FreedoomGameProfile[k] = FreedoomGameProfile[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.FreedoomGameProfile = FreedoomGameProfile;
 }

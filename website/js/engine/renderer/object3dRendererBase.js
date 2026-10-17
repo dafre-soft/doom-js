@@ -1,4 +1,10 @@
-class Object3dRendererBase {
+// Boot-shim interop: js/boot/shim-object3dRenderers.js may have put a stand-in on
+// window.Object3dRendererBase BEFORE this file evaluated (the parallel boot lets subclasses run
+// before their base class landed). Merge the real body into that constructor so
+// every early `extends Object3dRendererBase` keeps working; otherwise declare it normally.
+window.__Object3dRendererBaseDefined = true;
+const Object3dRendererBase__Real = class Object3dRendererBase {
+
     constructor() {
         this._litColor          = [0, 0, 0];
         this._lightContribution = [0, 0, 0];
@@ -348,3 +354,15 @@ class Object3dRendererBase {
 // Backdrop of the canvas-2D renderers that paint no scene background: a fixed
 // neutral grey, deliberately not the engine background and no sky.
 Object3dRendererBase.BACKDROP_COLOR = '#666666';
+
+if ((typeof window !== 'undefined') && (window.Object3dRendererBase !== undefined)
+    && (window.Object3dRendererBase !== Object3dRendererBase__Real)) {
+    Object.assign(window.Object3dRendererBase.prototype, Object3dRendererBase__Real.prototype);
+    Object.getOwnPropertyNames(Object3dRendererBase__Real)
+        .filter((k) => !['length', 'name', 'prototype'].includes(k))
+        .forEach((k) => { try { window.Object3dRendererBase[k] = Object3dRendererBase__Real[k]; } catch (e) {} });
+    Object.getOwnPropertyNames(Object3dRendererBase__Real.prototype)
+        .forEach((k) => { try { window.Object3dRendererBase.prototype[k] = Object3dRendererBase__Real.prototype[k]; } catch (e) {} });
+} else if ((typeof window === 'undefined') || (window.Object3dRendererBase === undefined)) {
+    window.Object3dRendererBase = Object3dRendererBase__Real;
+}

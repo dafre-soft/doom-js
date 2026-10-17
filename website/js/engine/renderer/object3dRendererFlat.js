@@ -1,4 +1,4 @@
-class Object3dRendererFlat extends Object3dRendererBase {
+class Object3dRendererFlat extends window.Object3dRendererBase {
     constructor() {
         super();
         this._center    = [0, 0, 0, 1];
@@ -79,4 +79,13 @@ class Object3dRendererFlat extends Object3dRendererBase {
 
         return center;
     }
+}
+
+// Publish for the boot shims / late evaluators; merge into a stand-in if one exists.
+if ((typeof window !== 'undefined') && (window.Object3dRendererFlat !== undefined) && (window.Object3dRendererFlat !== Object3dRendererFlat)) {
+    Object.assign(window.Object3dRendererFlat.prototype, Object3dRendererFlat.prototype);
+    Object.getOwnPropertyNames(Object3dRendererFlat).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.Object3dRendererFlat[k] = Object3dRendererFlat[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.Object3dRendererFlat = Object3dRendererFlat;
 }
