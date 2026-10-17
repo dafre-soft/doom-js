@@ -57,8 +57,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ----------------------------------------------------------------------------- deps bootstrap
 # Файл сам ставит себе зависимости: pip install ... && python -m playwright install chromium
 def ensure_dependencies():
-    import importlib
-    missing = [m for m in ("flask", "neat", "playwright") if importlib.util.find_spec(m) is None]
+    # ВАЖНО: просто `import importlib` не гарантирует наличие importlib.util
+    # (на некоторых системах/виндах importlib.util так и остаётся недоступен).
+    import importlib.util as importlib_util
+    missing = [m for m in ("flask", "neat", "playwright") if importlib_util.find_spec(m) is None]
     if missing:
         print("doom_neat: не хватает пакетов %s — ставлю автоматически…" % ", ".join(missing))
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet"] + missing)
@@ -97,7 +99,7 @@ WADS_DIR        = os.path.join(SITE_DIR, "wads")
 STATE_DIR       = os.path.join(HERE, ".neat_doom_state")
 CONFIG_PATH     = os.path.join(STATE_DIR, "config.json")
 BEST_PATH       = os.path.join(STATE_DIR, "best.json")
-MIND_PATH       = os.path.join(STATE_DIR, "mind.json")          # автосейв мозга (pop.save)
+MIND_PREFIX     = os.path.join(STATE_DIR, "mind")               # автосейв мозга: Checkpointer -> mind.1, mind.2, ...
 CHECKPOINT_DIR  = os.path.join(STATE_DIR, "checkpoints")
 
 PANEL_HOST   = "127.0.0.1"
@@ -887,14 +889,35 @@ class Trainer(threading.Thread):
             "episodes": 0, "status": "idle", "note": "",
             "mindLoadedAt": None, "lastMindSave": None,
         }
+        # управление из потока визуализации (:7980): пауза/стоп без перезапуска тренировки
+        self._pop_ref = None
         # текущий активный мозг (геном), для визуализации на :7980
         self.current_brain = {"key": None, "fitness": None, "nodes": 0, "conns": 0, "gen": 0}
+        self.last_action = None
 
     def stop(self):
         self.stop_event.set()
 
     def pause(self, on=True):
         (self.paused.set if on else self.paused.clear)()
+
+    def control(self, cmd):
+        """Управление мозгом с панели визуализации: pause/resume/stop/save."""
+        if cmd == "pause":
+            self.paused.set()
+        elif cmd == "resume":
+            self.paused.clear()
+        elif cmd == "stop":
+            self.paused.clear()
+            self.stop_event.set()
+        elif cmd == "save":
+            pop = self._pop_ref
+            if pop is not None:
+                self.mind_save(pop)
+                return {"ok": True, "saved": self.stats.get("lastMindSave")}
+            return {"ok": False, "error": "популяция ещё не создана"}
+        return {"ok": True, "cmd": cmd, "paused": self.paused.is_set(),
+                "stopping": self.stop_event.is_set()}
 
     # ---- мозг: build_phenotype вместо несуществующего genome.activate()
 
@@ -955,6 +978,8 @@ class Trainer(threading.Thread):
             logits = list(net.activate(feats_n))
             action, logp, _probs = head.act_from(logits, feats_n)
             yaw_delta = clamp(logits[self.NUM_OUTPUTS - 1], -25.0, 25.0) * 4.0
+            self.last_action = {"idx": int(action), "name": AGENT_ACTIONS[int(action)],
+                                "yaw": round(float(yaw_delta), 1), "logits": [round(float(x), 3) for x in logits]}
             br.apply_action(action, look_yaw=yaw_delta)
             br.grab_frame()      # кадр для визуализации (:7980)
 
@@ -990,6 +1015,14 @@ class Trainer(threading.Thread):
         loss, clip_frac, ep_return = head.finish_episode()
         self.state.log("ep%d: reward=%.1f kills=%d pickups=%d ppo_loss=%.3f clip=%.2f"
                        % (self.stats["episodes"], total_reward, kills, pickups, loss, clip_frac))
+        try:
+            self.state.ppo_history.append({
+                "episode": self.stats["episodes"], "reward": round(total_reward, 2),
+                "loss": round(float(loss), 4), "clip": round(float(clip_frac), 3),
+                "brain": self.current_brain.get("key"),
+            })
+        except Exception:
+            pass
         self.stats["episodes"] += 1
         return total_reward, {"return": ep_return, "loss": loss, "clip": clip_frac,
                               "pickups": pickups, "alive": alive_steps}
@@ -1015,8 +1048,11 @@ class Trainer(threading.Thread):
             if self.stop_event.is_set():
                 genome.fitness = 0.0
                 continue
+            waited = 0.0
             while self.paused.is_set() and not self.stop_event.is_set():
-                time.sleep(0.2)
+                time.sleep(0.2); waited += 0.2
+                if waited > 600:   # 10 минут паузы — считаем эпизод проваленным
+                    break
             try:
                 br.launch_game(opts)
                 time.sleep(1.5)
@@ -1028,25 +1064,51 @@ class Trainer(threading.Thread):
 
     # ---- автосейв / автолоад мозга (gzip+pickle состояния Population)
 
+    @staticmethod
+    def _latest_mind_file():
+        """Недавний чекпоинт Checkpointer: файлы вида mind.<gen> в STATE_DIR."""
+        try:
+            best = None
+            for name in os.listdir(STATE_DIR):
+                if name.startswith("mind.") and not name.endswith(".pkl"):
+                    suffix = name[len("mind."):]
+                    if suffix.isdigit():
+                        gen = int(suffix)
+                        if best is None or gen > best[0]:
+                            best = (gen, os.path.join(STATE_DIR, name))
+            return best[1] if best else None
+        except Exception:
+            return None
+
     def mind_save(self, pop):
         """Автосейв мозга: полное состояние популяции (generation+config+population+species)."""
         try:
             os.makedirs(STATE_DIR, exist_ok=True)
-            ck = neat.Checkpointer(os.path.join(STATE_DIR, "mind"))
+            ck = neat.Checkpointer(MIND_PREFIX)
             ck.save_checkpoint(pop.config, pop.population, pop.species, pop.generation)
             self.stats["lastMindSave"] = now_iso()
             self.stats["mindGeneration"] = pop.generation
         except Exception as e:
             self.state.log("автосейв мозга не удался: %s" % e)
 
-    @staticmethod
-    def mind_load(config):
+    @classmethod
+    def mind_load(cls, config):
         """Автозагрузка мозга: возвращает Population с восстановленным состоянием или None."""
-        if not os.path.exists(MIND_PATH):
+        path = cls._latest_mind_file()
+        if path is None:
             return None
         try:
-            restored = neat.Checkpointer.restore_checkpoint(MIND_PATH, new_config=config)
-            print("doom_neat: мозг загружен, продолжаем с поколения %d" % restored.generation)
+            restored = neat.Checkpointer.restore_checkpoint(path)
+            # если гиперпараметры на панели менялись — пересобираем геномы под новый config
+            try:
+                for key, g in list(restored.population.items()):
+                    restored.population[key] = neat.DefaultGenome.configure_genome(
+                        config.genome_config, g.key)
+                    restored.population[key].fitness = g.fitness
+            except Exception:
+                pass
+            print("doom_neat: мозг загружен (%s), продолжаем с поколения %d"
+                  % (os.path.basename(path), restored.generation))
             return restored
         except Exception as e:
             print("doom_neat: автозагрузка мозга не удалась (%s) — старт с нуля" % e)
@@ -1087,6 +1149,7 @@ class Trainer(threading.Thread):
                 self.state.log("автозагрузка мозга: продолжение с поколения %d" % pop.generation)
         if pop is None:
             pop = neat.Population(config)
+        self._pop_ref = pop
         pop.add_reporter(neat.StdOutReporter(False))
         reporter = neat.StatisticsReporter()
         pop.add_reporter(reporter)
@@ -1148,6 +1211,8 @@ class AppState:
         self.browser = Browser(self)
         self.trainer = None
         self.last_checkpoint_file = None
+        self.viz_httpd = None
+        self.ppo_history = deque(maxlen=50)   # [(episode, reward, loss, clip)] для :7980
 
     def log(self, msg):
         line = "[%s] %s" % (now_iso(), msg)
@@ -1600,22 +1665,223 @@ setInterval(refresh, 2000);
 """
 
 
+# ----------------------------------------------------------------------------- visualization server (:7980)
+
+VIZ_HTML = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>DOOM NEAT — визуализация</title>
+<style>
+ body{background:#111;color:#ddd;font:13px/1.4 monospace;margin:0;padding:12px}
+ h1{font-size:16px;margin:0 0 8px;color:#e74c3c}
+ .row{display:flex;gap:12px;flex-wrap:wrap}
+ #frame{background:#000;border:1px solid #333}
+ .panel{background:#1a1a1a;border:1px solid #333;padding:10px;border-radius:6px;margin-bottom:10px}
+ canvas#map{background:#0d0d0d;border:1px solid #333;display:block}
+ button{background:#333;color:#eee;border:1px solid #555;padding:6px 12px;cursor:pointer;border-radius:4px;margin-right:6px}
+ button:hover{background:#444}
+ table{border-collapse:collapse;width:100%} td,th{padding:2px 6px;border-bottom:1px solid #2a2a2a;text-align:left}
+ .k{color:#888} .v{color:#0f0} .act{color:#f1c40f;font-weight:bold}
+ img#frameimg{max-width:640px;display:block}
+</style></head><body>
+<h1>DOOM NEAT+PPO — живой взгляд агента (мозг прямо из window API)</h1>
+<div class="row">
+ <div>
+   <div class="panel">
+     <img id="frameimg" width="640" alt="нет кадра — тренировка не запущена?">
+     <div style="margin-top:6px">
+       <button onclick="ctl('pause')">⏸ пауза</button>
+       <button onclick="ctl('resume')">▶ продолжить</button>
+       <button onclick="ctl('save')">💾 сейв мозга сейчас</button>
+       <button onclick="ctl('stop')">⏹ стоп тренировки</button>
+     </div>
+   </div>
+   <div class="panel"><b>Мозг / HUD</b><div id="hud"></div></div>
+ </div>
+ <div>
+   <div class="panel"><b>Карта уровня + агент + видимые вещи</b><br><canvas id="map" width="420" height="420"></canvas></div>
+   <div class="panel"><b>Окно обучения (PPO history)</b><table id="ppo"></table></div>
+   <div class="panel"><b>Действия</b><div id="actions"></div></div>
+ </div>
+</div>
+<script>
+const ctl=c=>fetch('/api/mind/'+c,{method:'POST'}).then(r=>r.json()).then(j=>console.log(j));
+function bars(logits,names){let h='';(logits||[]).slice(0,names.length).forEach((v,i)=>{h+='<tr><td class=k>'+names[i]+'</td><td class=v>'+v.toFixed(2)+'</td></tr>';});return '<table>'+h+'</table>';}
+async function refresh(){
+ try{
+  const st=await (await fetch('/api/state')).json();
+  const t=st.trainer||{}, b=st.brain||{}, v=st.view||{}, p=v.player||{};
+  document.getElementById('frameimg').src='/frame.jpg?t='+Date.now();
+  const names=['forward','back','left','right','run','use','attack'];
+  document.getElementById('hud').innerHTML=
+    '<span class=k>статус:</span> <span class=v>'+t.status+'</span> '+
+    '<span class=k>поколение:</span> <span class=v>'+(t.generation??0)+'</span> '+
+    '<span class=k>эпизодов:</span> <span class=v>'+(t.episodes??0)+'</span><br>'+
+    '<span class=k>best fitness:</span> <span class=v>'+(t.bestFitnessEver??'—')+'</span> '+
+    '<span class=k>nodes/conns:</span> <span class=v>'+(b.nodes??'—')+'/'+(b.conns??'—')+'</span><br>'+
+    '<span class=k>позиция:</span> <span class=v>'+Math.round(p.x||0)+', '+Math.round(p.y||0)+'</span> '+
+    '<span class=k>yaw:</span> <span class=v>'+Math.round(p.angle||p.yaw||0)+'°</span><br>'+
+    '<span class=k>HP:</span> <span class=v>'+(p.health??'—')+'</span> '+
+    '<span class=k>armor:</span> <span class=v>'+(p.armor??'—')+'</span> '+
+    '<span class=k>dead:</span> <span class=v>'+(p.dead?'ДА':'нет')+'</span><br>'+
+    '<span class=k>последнее действие:</span> <span class=act>'+(st.last_action?st.last_action.name+' (yaw '+st.last_action.yaw+')':'—')+'</span>';
+  drawMap(v);
+  const ph=st.ppo_history||[];
+  document.getElementById('ppo').innerHTML=ph.slice(-8).map(x=>'<tr><td class=k>ep'+x.episode+'</td><td class=v>R='+x.reward.toFixed(1)+'</td><td class=v>loss='+x.loss.toFixed(3)+'</td><td class=v>clip='+x.clip.toFixed(2)+'</td></tr>').join('');
+  document.getElementById('actions').innerHTML=bars(st.last_logits,names);
+ }catch(e){console.error(e);}
+}
+function drawMap(v){
+ const c=document.getElementById('map'),g=c.getContext('2d');
+ g.clearRect(0,0,c.width,c.height);
+ const things=(v&&v.things)||[],p=(v&&v.player)||{x:0,y:0};
+ let xs=[p.x||0],ys=[p.y||0];things.forEach(t=>{xs.push(t.x);ys.push(t.y);});
+ const minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);
+ const sc=Math.max(1,(maxx-minx),(maxy-miny))*1.1||1;
+ const T=x=>(x-(minx+maxx)/2)/sc*c.width+c.width/2;
+ things.forEach(t=>{g.fillStyle=t.kind==='enemy'?'#e74c3c':(t.kind==='item'||t.kind==='pickup'||t.kind==='powerup')?'#f1c40f':'#666';g.fillRect(T(t.x)-2,T(t.y)-2,4,4);});
+ g.fillStyle='#2ecc71';g.beginPath();g.arc(T(p.x||0),T(p.y||0),5,0,7);g.fill();
+ const a=((p.angle||p.yaw||0))*Math.PI/180;
+ g.strokeStyle='#2ecc71';g.beginPath();g.moveTo(T(p.x||0),T(p.y||0));g.lineTo(T(p.x||0)+Math.cos(a)*25,T(p.y||0)+Math.sin(a)*25);g.stroke();
+}
+refresh(); setInterval(refresh,1500);
+</script></body></html>
+"""
+
+
+class VizHandler(BaseHTTPRequestHandler):
+    state = None  # AppState
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _json(self, obj, code=200):
+        data = json.dumps(obj, default=str).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        st = self.state
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            data = VIZ_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/frame.jpg":
+            jpeg = st.browser.frame_jpeg
+            if jpeg:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
+            else:
+                self._json({"error": "кадра пока нет (тренировка не идёт?)"}, 404)
+        elif path == "/api/state":
+            tr = st.trainer
+            view = st.browser.view_data or {}
+            la = getattr(tr, "last_action", None) if tr else None
+            self._json({
+                "trainer": (dict(tr.stats) if tr else {"status": "idle"}),
+                "brain": (tr.current_brain if tr else None),
+                "paused": bool(tr.paused.is_set()) if tr else False,
+                "view": view,
+                "things_count": len(view.get("things", []) or []),
+                "last_action": la,
+                "last_logits": (la or {}).get("logits"),
+                "ppo_history": getattr(st, "ppo_history", []),
+                "mind": {"autoSave": CFG.get()["mind"]["autoSave"],
+                         "autoLoad": CFG.get()["mind"]["autoLoad"],
+                         "lastMindSave": (tr.stats["lastMindSave"] if tr else None),
+                         "file": Trainer._latest_mind_file()},
+                "frame_ts": st.browser.frame_ts,
+            })
+        elif path == "/api/window":
+            br = st.browser
+            with br.lock:
+                page = br.page
+            data = None
+            if page is not None:
+                try:
+                    data = page.evaluate("""() => {
+                        const out = {};
+                        for (const k of Object.keys(window)) {
+                          try {
+                            const v = window[k];
+                            const t = typeof v;
+                            if (t === 'string' || t === 'number' || t === 'boolean' || v === null) out[k] = v;
+                            else if (t === 'object' && !(v instanceof Node) && !(v instanceof Window)) {
+                              const s = JSON.stringify(v);
+                              if (s && s.length < 4000) out[k] = JSON.parse(s);
+                            } else if (t === 'function') out[k] = '[fn ' + v.name + ']';
+                          } catch (e) {}
+                        }
+                        return out; }""")
+                except Exception as e:
+                    data = {"error": str(e)}
+            self._json({"window": data})
+        elif path.startswith("/api/wads"):
+            self._json({"root": WADS_DIR, "wads": scan_wads()})
+        else:
+            self._json({"error": "not found"}, 404)
+
+    def do_POST(self):
+        st = self.state
+        path = self.path.split("?")[0]
+        if path.startswith("/api/mind/"):
+            cmd = path.rsplit("/", 1)[-1]
+            tr = st.trainer
+            if tr is None:
+                self._json({"ok": False, "error": "тренер не запущен"}, 409)
+                return
+            self._json(tr.control(cmd))
+        elif path == "/api/viz/toggle":
+            st.browser.viz_enabled = not st.browser.viz_enabled
+            self._json({"ok": True, "viz_enabled": st.browser.viz_enabled})
+        else:
+            self._json({"error": "not found"}, 404)
+
+
+def start_viz_server(state, port):
+    try:
+        VizHandler.state = state
+        httpd = ThreadingHTTPServer((VIZ_HOST, port), VizHandler)
+    except OSError as e:
+        state.log("визуализация на :%d не поднялась: %s" % (port, e))
+        return None
+    th = threading.Thread(target=httpd.serve_forever, daemon=True)
+    th.start()
+    state.log("визуализация мозга: http://%s:%d (живой кадр + карта + PPO-окно)" % (VIZ_HOST, port))
+    return httpd
+
+
 # ----------------------------------------------------------------------------- main
 
 def main():
-    global PANEL_HOST, PANEL_PORT, GAME_PORT
+    global PANEL_HOST, PANEL_PORT, GAME_PORT, VIZ_PORT
     ap = argparse.ArgumentParser(description="DOOM NEAT+PPO control panel")
     ap.add_argument("--panel-port", type=int, default=PANEL_PORT)
+    ap.add_argument("--viz-port", type=int, default=VIZ_PORT,
+                    help="сервер визуализации мозга (window API), по умолчанию 7980")
     ap.add_argument("--game-port", type=int, default=GAME_PORT)
     ap.add_argument("--no-browser", action="store_true", help="не стартовать тренера сразу")
     ap.add_argument("--show", action="store_true", help="браузер с окном (не headless)")
     args = ap.parse_args()
 
     PANEL_PORT = args.panel_port
+    VIZ_PORT = args.viz_port
     GAME_PORT = args.game_port
     cfg = CFG.get()
     with CFG.lock:
         CFG.data["panelPort"] = PANEL_PORT
+        CFG.data["vizPort"] = VIZ_PORT
         CFG.data["gamePort"] = GAME_PORT
         CFG.data["siteUrl"] = "http://%s:%d/index.html" % (GAME_HOST, GAME_PORT)
         if args.show:
@@ -1625,6 +1891,7 @@ def main():
     # 1) сначала — контрольная панель на localhost:7990
     print("=" * 60)
     print("Контрольная панель:  http://localhost:%d" % PANEL_PORT)
+    print("Визуализация мозга:  http://localhost:%d" % VIZ_PORT)
     print("=" * 60)
     threading.Thread(
         target=lambda: app.run(host=PANEL_HOST, port=PANEL_PORT, threaded=True, use_reloader=False),
@@ -1633,6 +1900,9 @@ def main():
 
     # 2) затем — игровой сервер (сайт + раздача wad'ов)
     STATE.game_server.start(GAME_PORT)
+
+    # 2b) и сервер визуализации через window API (:7980)
+    STATE.viz_httpd = start_viz_server(STATE, VIZ_PORT)
 
     # 3) опционально сразу стартует тренировка
     if not args.no_browser:
@@ -1645,8 +1915,18 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         STATE.log("останавливаюсь…")
-        if STATE.trainer:
-            STATE.trainer.stop()
+        tr = STATE.trainer
+        if tr:
+            pop = tr._pop_ref
+            if pop is not None and CFG.get().get("mind", {}).get("autoSave", True):
+                tr.mind_save(pop)   # финальный автосейв мозга при выходе
+            tr.stop_event.set()
+            try:
+                tr.join(timeout=5)
+            except Exception:
+                pass
+        if getattr(STATE, "viz_httpd", None):
+            STATE.viz_httpd.shutdown()
         STATE.game_server.stop()
 
 
