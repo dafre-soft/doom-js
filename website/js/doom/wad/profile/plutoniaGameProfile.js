@@ -3,7 +3,7 @@
  * behaviour as the id Doom II profile with its own level names; its finale
  * texts (P1TEXT…) are not transcribed, so its chapter ends stay silent.
  */
-class PlutoniaGameProfile extends window.DoomGameProfile {
+const PlutoniaGameProfile__Real = class PlutoniaGameProfile extends window.DoomGameProfile {
     getCode() {
         return 'plutonia';
     }
@@ -70,9 +70,14 @@ class PlutoniaGameProfile extends window.DoomGameProfile {
 // re-parented onto the real prototype so their own methods stay reachable.
 if (typeof window !== 'undefined') {
     const _prev = window.PlutoniaGameProfile;
-    window.PlutoniaGameProfile = PlutoniaGameProfile;
-    if (_prev !== undefined && _prev !== PlutoniaGameProfile) {
-        Object.setPrototypeOf(PlutoniaGameProfile.prototype, window.DoomGameProfile.prototype);
-        try { Object.setPrototypeOf(_prev.prototype, PlutoniaGameProfile.prototype); } catch (e) {}
+    window.PlutoniaGameProfile = PlutoniaGameProfile__Real;
+    window.__PlutoniaGameProfileDefined = true;   // only AFTER the real class is on window
+    if (_prev !== undefined && _prev !== PlutoniaGameProfile__Real) {
+        const _base = window.DoomGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(PlutoniaGameProfile__Real.prototype, _base.prototype);
+        }
+        try { Object.assign(PlutoniaGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, PlutoniaGameProfile__Real.prototype); } catch (e) {}
     }
 }

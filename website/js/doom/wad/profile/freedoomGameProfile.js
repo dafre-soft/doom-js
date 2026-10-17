@@ -3,7 +3,7 @@
  * behaviour as the id Doom baseline, except the art shades that differ in
  * the Freedoom asset set (bluish BFG lightning instead of green).
  */
-class FreedoomGameProfile extends window.DefaultGameProfile {
+const FreedoomGameProfile__Real = class FreedoomGameProfile extends window.DefaultGameProfile {
     getCode() {
         return 'freedoom';
     }
@@ -38,9 +38,14 @@ class FreedoomGameProfile extends window.DefaultGameProfile {
 // re-parented onto the real prototype so their own methods stay reachable.
 if (typeof window !== 'undefined') {
     const _prev = window.FreedoomGameProfile;
-    window.FreedoomGameProfile = FreedoomGameProfile;
-    if (_prev !== undefined && _prev !== FreedoomGameProfile) {
-        Object.setPrototypeOf(FreedoomGameProfile.prototype, window.DefaultGameProfile.prototype);
-        try { Object.setPrototypeOf(_prev.prototype, FreedoomGameProfile.prototype); } catch (e) {}
+    window.FreedoomGameProfile = FreedoomGameProfile__Real;
+    window.__FreedoomGameProfileDefined = true;   // only AFTER the real class is on window
+    if (_prev !== undefined && _prev !== FreedoomGameProfile__Real) {
+        const _base = window.DefaultGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(FreedoomGameProfile__Real.prototype, _base.prototype);
+        }
+        try { Object.assign(FreedoomGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, FreedoomGameProfile__Real.prototype); } catch (e) {}
     }
 }

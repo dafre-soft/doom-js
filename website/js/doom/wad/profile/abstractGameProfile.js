@@ -14,7 +14,6 @@
 // window.AbstractGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
 // before their base class landed). Merge the real body into that constructor so
 // every early `extends AbstractGameProfile` keeps working; otherwise declare it normally.
-window.__AbstractGameProfileDefined = true;
 const AbstractGameProfile__Real = class AbstractGameProfile {
 
     /**
@@ -873,8 +872,12 @@ AbstractGameProfile._playerBodies = new Map();   // body data → its DoomMonste
 if (typeof window !== 'undefined') {
     const _prev = window.AbstractGameProfile;
     window.AbstractGameProfile = AbstractGameProfile__Real;
+    // The shim must never stand in for the real class again — set the flag
+    // ONLY now, after the real one is published.
+    window.__AbstractGameProfileDefined = true;
     if (_prev !== undefined && _prev !== AbstractGameProfile__Real) {
         Object.setPrototypeOf(AbstractGameProfile__Real.prototype, Function.prototype);
+        try { Object.assign(AbstractGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
         try { Object.setPrototypeOf(_prev.prototype, AbstractGameProfile__Real.prototype); } catch (e) {}
     }
 }

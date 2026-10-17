@@ -33,29 +33,45 @@ class GameProfileList {
         GameProfileList.__instance = this;
     }
 
-    // A real game profile always implements its own ammo catalog; a boot shim
-    // (or any half-evaluated stand-in) does not carry the method anywhere on
-    // its prototype chain. This is the cheap "is the real class here?" probe.
+    // A real game profile has a concrete buildAmmoTypes somewhere on its
+    // prototype chain: a boot shim (empty prototype) or the abstract base
+    // (whose stub throws 'must be implemented') does not. Walking the whole
+    // chain is what makes this robust against any load order — an early
+    // subclass instance merged onto a shim still resolves to the concrete
+    // DefaultGameProfile implementation once the real files have evaluated.
     static _isReal(Ctor) {
         try {
-            return (typeof Ctor === 'function') && (Ctor.prototype != null)
-                && (typeof Ctor.prototype.buildAmmoTypes === 'function')
-                && !String(Ctor.prototype.buildAmmoTypes).includes('must be implemented');
+            if ((typeof Ctor !== 'function') || (Ctor.prototype == null)) {
+                return false;
+            }
+            let proto = Ctor.prototype;
+            while ((proto != null) && (proto !== Object.prototype)) {
+                const fn = proto.buildAmmoTypes;
+                if ((typeof fn === 'function')
+                    && !String(fn).includes('must be implemented')) {
+                    return true;
+                }
+                proto = Object.getPrototypeOf(proto);
+            }
+
+            return false;
         } catch (e) {
             return false;
         }
     }
 
-    // Built lazily on first use — see the note above the class. Every entry is
-    // wrapped in try/catch: during a fast parallel boot some profile classes
-    // may still be evaluating, so we fall back to DefaultGameProfile (a plain
-    // doom-format WAD) instead of crashing the whole launch. Shim stand-ins
-    // are rejected via _isReal so their abstract stubs never reach the game.
+    // Built lazily on first use — see the note above the class. Shim stand-ins
+    // are rejected via _isReal so their empty stubs never reach the game; when
+    // a profile class is not real yet we build its REAL base (DefaultGameProfile)
+    // and graft the still-pending subclass's own prototype methods on top, so
+    // even a half-evaluated Tnt/Freedoom/Plutonia entry keeps a concrete ammo
+    // catalog instead of crashing with 'buildAmmoTypes must be implemented'.
     static _make(name) {
+        let Ctor = null;
         try {
             // The boot publishes every class on window (shim interop); reading it
             // there is TDZ-safe even while the declaring file is still evaluating.
-            const Ctor = (typeof window !== 'undefined' ? window[name] : undefined) ?? globalThis[name];
+            Ctor = (typeof window !== 'undefined' ? window[name] : undefined) ?? globalThis[name];
             if (GameProfileList._isReal(Ctor)) {
                 return new Ctor();
             }
@@ -63,7 +79,35 @@ class GameProfileList {
             console.warn('GameProfileList: profile "' + name + '" not ready yet', error);
         }
 
-        return new window.DefaultGameProfile();
+        const Base = GameProfileList._defaultReady();
+        if (Base === null) {
+            throw new Error('GameProfileList: DefaultGameProfile has not finished loading yet');
+        }
+        // Late-binding wrapper: if the real class lands on window later, the
+        // next construction uses it; until then we patch the base prototype.
+        const wrapper = function () {
+            const Real = (typeof window !== 'undefined' ? window[name] : undefined) ?? globalThis[name];
+            if ((Real != null) && (Real !== Ctor) && GameProfileList._isReal(Real)) {
+                return new Real();
+            }
+            const instance = new Base();
+            if ((Ctor != null) && (Ctor.prototype != null)) {
+                for (const key of Object.getOwnPropertyNames(Ctor.prototype)) {
+                    if (key === 'constructor') {
+                        continue;
+                    }
+                    try {
+                        Object.defineProperty(instance, key,
+                            Object.getOwnPropertyDescriptor(Ctor.prototype, key));
+                    } catch (e) {}
+                }
+            }
+
+            return instance;
+        };
+        wrapper.prototype = Base.prototype;   // instanceof stays true
+
+        return new wrapper();
     }
 
     static _defaultReady() {

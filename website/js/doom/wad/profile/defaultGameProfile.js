@@ -12,7 +12,6 @@
 // window.DefaultGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
 // before their base class landed). Merge the real body into that constructor so
 // every early `extends DefaultGameProfile` keeps working; otherwise declare it normally.
-window.__DefaultGameProfileDefined = true;
 const DefaultGameProfile__Real = class DefaultGameProfile extends window.AbstractGameProfile {
 
     getCode() {
@@ -1478,8 +1477,20 @@ DefaultGameProfile.E4_MUSIC_REUSE = [
 if (typeof window !== 'undefined') {
     const _prev = window.DefaultGameProfile;
     window.DefaultGameProfile = DefaultGameProfile__Real;
+    window.__DefaultGameProfileDefined = true;   // only AFTER the real class is on window
     if (_prev !== undefined && _prev !== DefaultGameProfile__Real) {
-        Object.setPrototypeOf(DefaultGameProfile__Real.prototype, window.AbstractGameProfile.prototype);
+        // Reparent the real class onto whatever AbstractGameProfile is on
+        // window RIGHT NOW (real file or shim — prototype chains are live, so
+        // when the real abstract lands later it is picked up automatically).
+        const _abs = window.AbstractGameProfile;
+        if ((_abs != null) && (_abs.prototype != null)) {
+            Object.setPrototypeOf(DefaultGameProfile__Real.prototype, _abs.prototype);
+        }
+        // The shim constructor may already have instances/subclasses hanging
+        // off it: graft its own prototype methods in, then publish the real one.
+        try {
+            Object.assign(DefaultGameProfile__Real.prototype, _prev.prototype);
+        } catch (e) {}
         try { Object.setPrototypeOf(_prev.prototype, DefaultGameProfile__Real.prototype); } catch (e) {}
     }
 }

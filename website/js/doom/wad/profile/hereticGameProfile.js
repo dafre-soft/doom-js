@@ -5,7 +5,7 @@
  * codes (>= 1000, unreachable by vanilla WAD data, see WadConstants) so the
  * Doom pipeline stays untouched.
  */
-class HereticGameProfile extends window.DefaultGameProfile {
+const HereticGameProfile__Real = class HereticGameProfile extends window.DefaultGameProfile {
     getCode() {
         return 'heretic';
     }
@@ -1766,9 +1766,14 @@ window.HereticGameProfile.PLAYER_BODY = {
 // re-parented onto the real prototype so their own methods stay reachable.
 if (typeof window !== 'undefined') {
     const _prev = window.HereticGameProfile;
-    window.HereticGameProfile = HereticGameProfile;
-    if (_prev !== undefined && _prev !== HereticGameProfile) {
-        Object.setPrototypeOf(HereticGameProfile.prototype, window.DefaultGameProfile.prototype);
-        try { Object.setPrototypeOf(_prev.prototype, HereticGameProfile.prototype); } catch (e) {}
+    window.HereticGameProfile = HereticGameProfile__Real;
+    window.__HereticGameProfileDefined = true;   // only AFTER the real class is on window
+    if (_prev !== undefined && _prev !== HereticGameProfile__Real) {
+        const _base = window.DefaultGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(HereticGameProfile__Real.prototype, _base.prototype);
+        }
+        try { Object.assign(HereticGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, HereticGameProfile__Real.prototype); } catch (e) {}
     }
 }

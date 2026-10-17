@@ -7,7 +7,6 @@
 // window.DoomGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
 // before their base class landed). Merge the real body into that constructor so
 // every early `extends DoomGameProfile` keeps working; otherwise declare it normally.
-window.__DoomGameProfileDefined = true;
 const DoomGameProfile__Real = class DoomGameProfile extends window.DefaultGameProfile {
 
     getCode() {
@@ -124,8 +123,15 @@ const DoomGameProfile__Real = class DoomGameProfile extends window.DefaultGamePr
 if (typeof window !== 'undefined') {
     const _prev = window.DoomGameProfile;
     window.DoomGameProfile = DoomGameProfile__Real;
+    window.__DoomGameProfileDefined = true;   // only AFTER the real class is on window
     if (_prev !== undefined && _prev !== DoomGameProfile__Real) {
-        Object.setPrototypeOf(DoomGameProfile__Real.prototype, window.DefaultGameProfile.prototype);
+        const _base = window.DefaultGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(DoomGameProfile__Real.prototype, _base.prototype);
+        }
+        try {
+            Object.assign(DoomGameProfile__Real.prototype, _prev.prototype);
+        } catch (e) {}
         try { Object.setPrototypeOf(_prev.prototype, DoomGameProfile__Real.prototype); } catch (e) {}
     }
 }
