@@ -1,5 +1,5 @@
 {
-  "version": "v1.1261",
+  "version": "v1.1262",
   "files": {
     "assets": [
       "/assets/uzdoom/doom/sprite/chip1.png",
@@ -45,6 +45,9 @@
       "/css/doomMenu.css"
     ],
     "js": [
+      "/js/boot/shim-object3dRenderers.js",
+      "/js/boot/shim-abstractGameProfile.js",
+      "/js/boot/shim-abstractMoverBuilder.js",
       "/js/engine/entity/abstractLoadedEntity.js",
       "/js/engine/entity/object3d.js",
       "/js/engine/entity/instance.js",
