@@ -797,12 +797,19 @@ class DoomJsApi {
         // One of those three works without any code change in the browser.
         const url = options.wadUrl ?? options.url ?? options.path ?? options.src ?? options.wadPath;
         if ((url !== undefined) && (url !== null)) {
-            const wanted = DoomJsApi._profileCodeOption(options);
+            const wanted     = DoomJsApi._profileCodeOption(options);
             const candidates = DoomJsApi._candidatesFor(url);
+            const fileName   = DoomJsApi._fileNameOf(url);
+            const stored     = await DoomJsApi._cachedWad(fileName.replace(/\.wad$/i, ''));
+            if (stored !== null) {
+                console.info('doomApi.launch("' + fileName + '"): loaded from browser storage (no download)');
+
+                return {wadFile: stored.wadFile, meta: stored.meta, profileCode: wanted};
+            }
 
             return {
-                wadFile: await DoomJsApi._fetchFirstAvailable(candidates),
-                meta:    {id: wanted ?? 'url', name: DoomJsApi._fileNameOf(url)},
+                wadFile: await DoomJsApi._fetchFirstAvailable(candidates, {name: fileName}),
+                meta:    {id: wanted ?? 'url', name: fileName},
                 profileCode: wanted
             };
         }
@@ -845,7 +852,7 @@ class DoomJsApi {
         if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
             const probes = ['/wads/' + wanted + '.wad', '/wads/' + wanted.toUpperCase() + '.WAD'];
             try {
-                const wadFile = await DoomJsApi._fetchFirstAvailable(probes);
+                const wadFile = await DoomJsApi._fetchFirstAvailable(probes, {name: wanted + '.wad'});
 
                 return {
                     wadFile: wadFile,
@@ -1158,8 +1165,10 @@ class DoomJsApi {
         try {
             const fileName = DoomJsApi._fileNameOf(url);
             const base     = fileName.replace(/\.wad$/i, '').toLowerCase();
-            const names    = [fileName, base + '.wad', 'srv-' + base + '.wad']
-                .filter((n, i, a) => (a.indexOf(n) === i));
+            const extra    = String(meta?.name ?? '').trim();
+            const names    = [fileName, base + '.wad', 'srv-' + base + '.wad',
+                ((extra.length > 0) ? (extra.endsWith('.wad') ? extra : extra + '.wad') : '')]
+                .filter((n, i, a) => ((n.length > 0) && (a.indexOf(n) === i)));
             const buffer   = await DoomJsApi._fetchBuffer(url);
             let stored     = 0;
             for (const name of names) {
