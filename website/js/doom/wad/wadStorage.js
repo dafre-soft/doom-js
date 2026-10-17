@@ -93,6 +93,18 @@ class WadStorage {
     }
 
     /**
+     * Metadata of a stored WAD by its exact file name, without reading bytes.
+     *
+     * @param {string} name
+     * @returns {Promise<object|null>}
+     */
+    async findByName(name) {
+        const wanted = String(name).toLowerCase();
+
+        return (await this.listMeta()).find((meta) => (String(meta.name).toLowerCase() === wanted)) ?? null;
+    }
+
+    /**
      * @param {int} id
      * @returns {Promise<{meta: object, data: ArrayBuffer}>}
      */
