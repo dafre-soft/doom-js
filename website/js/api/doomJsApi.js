@@ -1092,21 +1092,46 @@ class DoomJsApi {
     /** All download candidates of a table entry: explicit URLs plus the CDN mirrors of each repo reference. */
     static _candidateUrls(entry) {
         const out = [];
+        const push = (u) => {
+            if (!out.includes(u)) {
+                out.push(u);
+            }
+        };
         for (const u of (entry.urls ?? [])) {
             if ((typeof u === 'string') && /^https?:/.test(u)) {
-                out.push(u);
+                push(u);
+                // A wad_server URL can also be answered by THIS site when the
+                // server was started with --dir pointing at the site folder
+                // (then /wads/x.wad exists right here too). Add that local
+                // spelling as an extra candidate — same file, no network hop.
+                const fileName = DoomJsApi._fileNameOf(u);
+                if (/^\/(wads|wad)\//i.test(new URL(u).pathname) || /\.wad$/i.test(fileName)) {
+                    push('/wads/' + encodeURIComponent(fileName));
+                }
                 continue;
             }
             if ((typeof u === 'string') && u.startsWith('/')) {
-                out.push(u);
+                push(u);
                 continue;
             }
             for (const build of DoomJsApi.CDN_HOSTS) {
-                out.push(build(u));
+                push(build(u));
             }
         }
-        if ((typeof entry.local === 'string') && !out.includes(entry.local)) {
-            out.unshift(entry.local);
+        if (typeof entry.local === 'string') {
+            if (entry.local.startsWith('browser-storage:')) {
+                // Registered from a wad_server listing whose bytes are already
+                // cached under the plain name — probe the cache spellings.
+                const name = entry.local.slice('browser-storage:'.length);
+                push('cache:' + name);
+                push('cache:' + name.replace(/\.wad$/i, ''));
+            } else {
+                push(entry.local);
+            }
+        }
+        // Last resort for any named entry: /wads/<name>.wad on this very site.
+        if (typeof entry.name === 'string') {
+            push('/wads/' + encodeURIComponent(DoomJsApi._fileNameOf(entry.name)));
         }
 
         return out;
@@ -1116,19 +1141,36 @@ class DoomJsApi {
      * WAD wins (a dead localhost port fails in milliseconds, so the slowest
      * mirror never decides how long the launch takes). */
     static async _fetchFirstAvailable(urls, meta = null) {
-        const attempts = urls.map(async (url) => {
-            const wadFile = await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
+        // 'cache:<name>' candidates are answered straight from IndexedDB.
+        const cacheHits = await Promise.all(urls.map(async (url) => {
+            if (typeof url === 'string' && url.startsWith('cache:')) {
+                return DoomJsApi._cachedWad(url.slice('cache:'.length));
+            }
 
-            return {url: url, wadFile: wadFile};
-        });
+            return null;
+        }));
+        for (const hit of cacheHits) {
+            if (hit !== null) {
+                console.info('doomApi.launch: loaded "' + (hit.meta?.name ?? '') + '" from browser storage (no download)');
+
+                return hit.wadFile;
+            }
+        }
+        const attempts = urls.filter((url) => !(typeof url === 'string' && url.startsWith('cache:')))
+            .map(async (url) => {
+                const wadFile = await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
+
+                return {url: url, wadFile: wadFile};
+            });
         // Log each failure as it happens, without ever rejecting unhandled.
+        const realUrls = urls.filter((url) => !(typeof url === 'string' && url.startsWith('cache:')));
         attempts.forEach((attempt, i) => {
-            attempt.catch((error) => console.warn('doomApi: ' + urls[i] + ' failed:', error.message ?? error));
+            attempt.catch((error) => console.warn('doomApi: ' + realUrls[i] + ' failed:', error.message ?? error));
         });
 
         const winner = await Promise.any(attempts).catch(() => null);
         if (winner !== null) {
-            if (winner.url !== urls[0]) {
+            if (winner.url !== realUrls[0]) {
                 console.info('doomApi: loaded the WAD from "' + winner.url + '"');
             }
             // Cache the bytes in IndexedDB so the next launch({wadId}) is
@@ -1137,7 +1179,7 @@ class DoomJsApi {
 
             return winner.wadFile;
         }
-        throw new Error('doomApi.launch: could not download the WAD from any source (' + urls.join(', ') + ')');
+        throw new Error('doomApi.launch: could not download the WAD from any source (' + realUrls.join(', ') + ')');
     }
 
     /** Read a launch-named WAD straight out of browser storage (IndexedDB).
