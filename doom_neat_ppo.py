@@ -107,6 +107,12 @@ DEFAULT_CONFIG = {
             "bias_mutation_rate": 0.10,
             "response_mutation_rate": 0.10,
         },
+        # стандартные списки активаций/агрегаций neat-python; можно менять с панели
+        "activations": ["sigmoid", "tanh", "relu", "sin", "gaussian", "identity"],
+        "aggregations": ["sum"],
+        "initial_connection": "partial_directed",
+        "allowed_subconnections_fraction": 0.7,
+        "max_candidates": 10,
     },
     "ppo": {
         "episodes_per_genome": 2,
@@ -143,27 +149,62 @@ def deep_merge(dst, src):
 
 def build_neat_config(cfg):
     n = cfg["neat"]
+
+    def _fmt(v):
+        if isinstance(v, bool):
+            return str(v)
+        if isinstance(v, (list, tuple)):
+            return ",".join(str(x) for x in v)
+        return str(v)
+
+    # [NEAT] — параметры уровня конфигурации neat-python 2.0
     lines = [
         "[NEAT]",
-        f"fitness_function = maximize",
         f"pop_size = {int(n['pop_size'])}",
-        f"compatibility_threshold = {float(n['compatibility_threshold'])}",
-        f"explicit_speciation = {bool(n['explicit_speciation'])}",
+        "fitness_criterion = max",
+        "fitness_threshold = 1000000",   # останавливаемся по победе/панели, не по фитнесу
+        "reset_on_extinction = True",
+        "no_fitness_termination = True",
+    ]
+    if "seed" in n:
+        lines.append(f"seed = {int(n['seed'])}")
+
+    # [DefaultGenome] — структура сети и мутации
+    g = dict(n["genome_config"])
+    # совместимость со старыми именами параметров из панели
+    if "compatibility_disjoint_coefficient" in g:
+        g["compat_disjoint_coefficient"] = g.pop("compatibility_disjoint_coefficient")
+    if "compatibility_weight_coefficient" in g:
+        g["compat_weight_coefficient"] = g.pop("compatibility_weight_coefficient")
+    genome_lines = [
         "num_inputs = %d" % N_INPUTS,
         "num_outputs = %d" % N_ACTIONS,
     ]
-    g = n["genome_config"]
     for key, val in g.items():
-        lines.append(f"{key} = {val}")
-    for key, val in n["stagnation_species_config"].items():
-        lines.append(f"{key} = {val}")
-    text = "\n".join(lines) + "\n"
+        genome_lines.append(f"{key} = {_fmt(val)}")
+    for key in ("activations", "aggregations", "initial_connection",
+                "allowed_subconnections_fraction", "max_candidates"):
+        if key in n:
+            genome_lines.append(f"{key} = {_fmt(n[key])}")
+
+    # [DefaultSpeciesSet] / [DefaultStagnation] / [DefaultReproduction]
+    ss = n.get("species_set_config", {"compatibility_threshold": n["compatibility_threshold"],
+                                      "explicit_speciation": n["explicit_speciation"]})
+    stag = dict(n["stagnation_species_config"])
+    repro = n.get("reproduction_config", {"clone_chance": g.get("clone_chance", 0.1)})
+
+    text = "\n".join(lines) + "\n\n[DefaultGenome]\n" + "\n".join(genome_lines) \
+        + "\n\n[DefaultSpeciesSet]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in ss.items()) \
+        + "\n\n[DefaultStagnation]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in stag.items()) \
+        + "\n\n[DefaultReproduction]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in repro.items()) \
+        + "\n"
     tmp = tempfile.NamedTemporaryFile("w", suffix=".cfg", delete=False)
     tmp.write(text)
     tmp.close()
     path = tmp.name
     try:
-        return neat.Config.load(path)
+        return neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                           neat.DefaultSpeciesSet, neat.DefaultStagnation, path)
     finally:
         os.unlink(path)
 
@@ -297,62 +338,57 @@ class Trainer:
             browser = s.ensure_browser()
             page = s.ensure_page(browser)
 
-            gen_reporter = neat.DefaultReporter(config)
             stats = neat.StatisticsReporter()
-            pool = neat.Pool()
-            ga = neat.GAPopulation.create_population(config.pop_size, config)
-            species_set = neat.Speciation(species_set=None) if False else None  # placeholder
-            from neat.speciation import SimpleSpeciation
-            speciator = SimpleSpeciation(config)
-            speciator.speciate(ga)
 
-            generation = 0
-            while self.running:
-                generation += 1
-                cfg = s.config_snapshot()  # горячее применение изменений панели
-                genomes = [(gid, g) for gid, g in _all_genomes(ga)]
-                self.add_log("Поколение %d: %d геномов, %d видов"
-                             % (generation, len(genomes), len(ga.species)))
-
-                for gid, genome in genomes:
+            def eval_genomes(genomes_iter, config_):
+                for gid, genome in genomes_iter:
                     if not self.running:
-                        break
-                    fitness, info = self._evaluate(genome, page, cfg)
+                        genome.fitness = 0.0
+                        continue
+                    c2 = s.config_snapshot()
+                    fitness, info = self._evaluate(genome, page, c2)
                     genome.fitness = fitness
                     self.add_log("  genome %-8s fitness=%8.2f  steps=%4d kills=%2d dmg=%5.1f dist=%6.1f"
                                  % (gid, fitness, info["steps"], info["kills"],
                                     info["dmg"], info["distance"]))
 
+            ga = neat.Population(config)
+            ga.add_reporter(neat.StdOutReporter(True))
+            ga.add_reporter(stats)
+
+            generation = 0
+            while self.running:
+                generation += 1
+                cfg = s.config_snapshot()  # горячее применение изменений панели
+                self.add_log("Поколение %d: популяция=%d, видов=%d"
+                             % (generation, config.pop_size, len(ga.species)))
+
+                best = ga.run(eval_genomes, 1)
                 if not self.running:
                     break
 
-                best = max(genomes, key=lambda kg: kg[1].fitness or 0.0)
+                genomes = [(gid, g) for gid, g in _all_genomes(ga)]
+                best_fit = max((g.fitness or 0.0) for _, g in genomes)
                 mean = sum((g.fitness or 0.0) for _, g in genomes) / max(1, len(genomes))
                 self.history.append({"gen": generation,
-                                     "best": round(best[1].fitness or 0.0, 2),
+                                     "best": round(best_fit, 2),
                                      "mean": round(mean, 2),
                                      "wall": time.time()})
                 if len(self.history) > 2000:
                     self.history = self.history[-2000:]
-                self.add_log("Поколение %d завершено: best=%.2f mean=%.2f (genom %s)"
-                             % (generation, best[1].fitness or 0.0, mean, best[0]))
+                self.add_log("Поколение %d завершено: best=%.2f mean=%.2f"
+                             % (generation, best_fit, mean))
 
                 # PPO-подобная коррекция: advantage относительно базлайна (среднего
                 # вида) подрезается клипом epsilon и масштабирует давление отбора.
-                adv = (best[1].fitness or 0.0) - mean
+                adv = best_fit - mean
                 clip_eps = float(cfg["ppo"]["clip_epsilon"])
                 scale = 1.0 + max(-clip_eps, min(clip_eps, adv / max(abs(mean), 1.0)))
                 self.add_log("  advantage=%.2f -> clipped pressure x%.3f" % (adv, scale))
 
-                gen_reporter.start_generation(generation)
-                ga.epoch(ga.select, scale)
-                stats.add_generation(generation,
-                                    max(g.fitness or 0 for _, g in genomes),
-                                    mean)
-                speciator.speciate(ga)
                 s.checkpoint(ga, generation)
 
-                if s.win_condition_met(best[1]):
+                if s.win_condition_met(best):
                     self.add_log("ПОБЕДА: уровень пройден! Остановка.")
                     break
 
@@ -367,12 +403,8 @@ class Trainer:
     def _evaluate(self, genome, page, cfg):
         ppo = cfg["ppo"]
         game = cfg["game"]
-        brain = neat.nn.FeedForwardNetwork.create(genome, _neat_config_of(genome)) \
-            if False else None
-        # simpler: build network directly from genome params
         import math
         node_evals = _compile_genome(genome)
-
         total_reward = 0.0
         agg = {"steps": 0, "kills": 0, "dmg": 0.0, "distance": 0.0}
         episodes = int(ppo["episodes_per_genome"])
@@ -492,13 +524,6 @@ def _all_genomes(ga):
             yield gid, sp.genomes[gid]
 
 
-_NEAT_CFG_CACHE = {}
-
-
-def _neat_config_of(genome):
-    return genome  # unused helper kept for clarity
-
-
 def _compile_genome(genome):
     """Превращает genome в список вычислений (свой mini-feedforward)."""
     ph = genome.phenotype
@@ -506,8 +531,8 @@ def _compile_genome(genome):
     for nid in ph.nodes:
         node = genome.nodes[nid]
         incoming = [(src, conn.weight, conn.enabled)
-                    for src, conn in node.connections.items()
-                    if conn.enabled and conn.recurrent is False]
+                    for src, conn in node.incoming.items()
+                    if conn.enabled and getattr(conn, "recurrent", False) is False]
         evals.append({
             "id": nid,
             "type": node.type,
@@ -517,29 +542,17 @@ def _compile_genome(genome):
             "incoming": incoming,
         })
     order = _topo_order(evals)
-    return {"evals": evals, "order": order, "outputs": list(ph.outputs)}
+    return {"evals": evals, "order": order,
+            "inputs": list(ph.inputs), "outputs": list(ph.outputs)}
 
 
 def _topo_order(evals):
+    import graphlib
     by_id = {e["id"]: e for e in evals}
-    import graphlib if False else None  # noqa  (fallback ниже)
-    order = []
-    seen = set()
-
-    def visit(nid, stack):
-        if nid in seen or nid in stack:
-            return
-        stack.add(nid)
-        e = by_id.get(nid)
-        if e is not None:
-            for src, _, _ in e["incoming"]:
-                visit(src, stack)
-        stack.discard(nid)
-        seen.add(nid)
-        order.append(nid)
-
-    for nid in by_id:
-        visit(nid, set())
+    ts = graphlib.TopologicalSorter()
+    for e in evals:
+        ts.add(e["id"], *(src for src, _, _ in e["incoming"] if src in by_id))
+    order = list(ts.static_order())
     return [by_id[n] for n in order if n in by_id]
 
 
@@ -564,24 +577,21 @@ def _activate(name, x):
 
 
 def _forward(net, obs):
-    import math
     values = {}
     inputs = list(obs)
-    for i, nid in enumerate(sorted(_INPUT_NODE_IDS(net))):
+    for i, nid in enumerate(net["inputs"]):
         values[nid] = inputs[i] if i < len(inputs) else 0.0
     for e in net["order"]:
         nid = e["id"]
         if e["type"] == "input":
             continue
-        if e["type"] == "output":
-            pass
         s = e["bias"]
         for src, w, en in e["incoming"]:
             if en:
                 s += values.get(src, 0.0) * w
         values[nid] = _activate(e["activation"], s * e["response"])
     outs = []
-    for j, nid in enumerate(sorted(_OUTPUT_NODE_IDS(net))):
+    for nid in net["outputs"]:
         v = values.get(nid, 0.0)
         outs.append(max(-1.0, min(1.0, v)))
     # маппинг: [-1..1] -> действия
@@ -592,14 +602,6 @@ def _forward(net, obs):
     fire = 1.0 if outs[4] > 0.0 else 0.0
     use = 1.0 if outs[5] > 0.0 else 0.0
     return [fwd, strafe, turn, pitch, fire, use]
-
-
-def _INPUT_NODE_IDS(net):
-    return [e["id"] for e in net["evals"] if e["type"] == "input"]
-
-
-def _OUTPUT_NODE_IDS(net):
-    return [e["id"] for e in net["evals"] if e["type"] == "output"]
 
 
 def _featurize(snap, prev):
@@ -796,7 +798,7 @@ class AppState:
     def checkpoint(self, ga, generation):
         path = os.path.join(REPO_ROOT, "doom_neat_ppo.checkpoint")
         try:
-            neat.checkpoint.SaveCheckpointer(
+            neat.Checkpointer(
                 ga, prefix=path, reference_config=None,
                 to_pickle=True).save(checkpoint_number=generation)
             self.last_checkpoint = "%s-%d" % (path, generation)
