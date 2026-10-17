@@ -1,5 +1,5 @@
 {
-  "siteUrl": "http://127.0.0.1:8124/index.html",
+  "siteUrl": "http://127.0.0.1:8123/index.html",
   "headless": true,
   "game": {
     "wadName": "freedoom1",
@@ -24,5 +24,10 @@
     "time": -0.01,
     "near_item": 0.02,
     "near_enemy": 0.01
+  },
+  "ports": {
+    "panel": 8090,
+    "game": 8123,
+    "raw": 8125
   }
 }
