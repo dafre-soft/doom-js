@@ -38,6 +38,7 @@ from urllib.parse import unquote, parse_qs
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8090
+LAST_SERVER = None  # экземпляр ThreadingHTTPServer после main() — для in-process stop
 
 # известные IWAD'ы для --fetch (CORS-friendly зеркала)
 DOWNLOADS = [
@@ -410,6 +411,10 @@ def main():
         return
 
     srv = ThreadingHTTPServer(("0.0.0.0", args.port), WadHandler)
+    # для in-process автозапуска (doom_neat_ppo monkey-patch импорта):
+    # отдаём экземпляр сервера наружу, чтобы можно было вызвать shutdown()
+    global LAST_SERVER
+    LAST_SERVER = srv
     print("URL для doomApi:")
     for w in good:
         print("  http://127.0.0.1:%d%s   (wadId: '%s')" % (args.port, w["file"], w["name"]))
