@@ -13,16 +13,27 @@ doom_neat.py — NEAT + PPO агент, играющий в DOOM (spipu-doom), �
 загрузка своих .wad, скачивание известных IWAD, регистрация WAD по URL,
 старт/стоп тренировки, графики, логи, чекпоинты.
 
-Зависимости:
-    pip install flask neat-python playwright requests
-    python -m playwright install chromium
+Автосейв мозга (NEAT-популяции): после каждого поколения мозг сохраняется в
+.neat_doom_state/mind.json (текстовый формат neat-python). При следующем запуске
+(или при старте тренировки) мозг автозагружается — обучение продолжается с того
+места, где остановилось.
+
+Визуализация: отдельный HTTP-сервер на http://localhost:7980 показывает живой
+кадр из браузера (doomApi.screenshot() через Playwright), HUD (позиция, здоровье,
+броня, оружие, патроны, цель/предмет), текущий мозг агента, фитнес-графики и все
+эндпоинсы window.__NEAT_DOOM__ API.
+
+Зависимости (ставятся автоматически при запуске, если чего-то не хватает):
+    pip install flask neat-python playwright && python -m playwright install chromium
 
 Запуск:
-    python doom_neat.py                 # панель :7990, игровой сервер :8123
-    python doom_neat.py --panel-port 7990 --game-port 8123 --no-browser
+    python doom_neat.py                 # панель :7990, визуализация :7980, игра :8123
+    python doom_neat.py --panel-port 7990 --viz-port 7980 --game-port 8123 --no-train
 """
 
 import argparse
+import base64
+import io
 import json
 import math
 import os
@@ -43,6 +54,30 @@ from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# ----------------------------------------------------------------------------- deps bootstrap
+# Файл сам ставит себе зависимости: pip install ... && python -m playwright install chromium
+def ensure_dependencies():
+    import importlib
+    missing = [m for m in ("flask", "neat", "playwright") if importlib.util.find_spec(m) is None]
+    if missing:
+        print("doom_neat: не хватает пакетов %s — ставлю автоматически…" % ", ".join(missing))
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet"] + missing)
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            b = pw.chromium.launch(headless=True)
+            b.close()
+    except Exception:
+        print("doom_neat: Chromium для Playwright не найден — ставлю 'python -m playwright install chromium'…")
+        try:
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+        except Exception as e:
+            print("doom_neat: не удалось поставить браузер (%s); панель всё равно работает, "
+                  "тренировка требует браузер." % e)
+
+
+ensure_dependencies()
+
 import neat  # neat-python
 from flask import Flask, jsonify, request
 
@@ -51,16 +86,24 @@ try:
 except Exception:
     np = None
 
+try:
+    from PIL import Image as PILImage
+except Exception:
+    PILImage = None
+
 HERE            = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR        = os.path.join(HERE, "website")
 WADS_DIR        = os.path.join(SITE_DIR, "wads")
 STATE_DIR       = os.path.join(HERE, ".neat_doom_state")
 CONFIG_PATH     = os.path.join(STATE_DIR, "config.json")
 BEST_PATH       = os.path.join(STATE_DIR, "best.json")
+MIND_PATH       = os.path.join(STATE_DIR, "mind.json")          # автосейв мозга (pop.save)
 CHECKPOINT_DIR  = os.path.join(STATE_DIR, "checkpoints")
 
 PANEL_HOST   = "127.0.0.1"
 PANEL_PORT   = 7990
+VIZ_HOST     = "127.0.0.1"
+VIZ_PORT     = 7980
 GAME_HOST    = "127.0.0.1"
 GAME_PORT    = 8123
 
@@ -202,10 +245,16 @@ def download_wad(fname, urls, dest_dir):
 
 DEFAULT_CONFIG = {
     "panelPort": PANEL_PORT,
+    "vizPort": VIZ_PORT,
     "gamePort": GAME_PORT,
     "siteUrl": "http://%s:%d/index.html" % (GAME_HOST, GAME_PORT),
     "headless": True,
     "browserArgs": [],
+    "mind": {
+        "autoSave": True,            # автосейв мозга после каждого поколения
+        "autoLoad": True,            # автозагрузка мозга при старте тренировки
+        "saveEveryGenerations": 1,   # раз в N поколений
+    },
     "game": {
         "wadName": "freedoom1",          # имя wad из каталога (или custom url)
         "wadUrl": None,                  # явный URL вада для браузера
@@ -699,6 +748,12 @@ class Browser:
         self.browser = None
         self.page = None
         self.lock = threading.Lock()
+        # кэш для визуализации (:7980) — обновляется из потока тренера,
+        # чтобы Flask/PIL не блокивали игровой цикл Playwright
+        self.frame_jpeg = None          # bytes JPEG
+        self.frame_ts = 0.0             # unix time кадра
+        self.view_data = None           # последний getView() (dict)
+        self.viz_enabled = True         # дёргать ли скриншоты из браузера
 
     def available(self):
         try:
@@ -731,9 +786,43 @@ class Browser:
             if self.page is None:
                 return None
             try:
-                return self.page.evaluate("() => (window.doomApi && doomApi.getView()) ? doomApi.getView() : null")
+                view = self.page.evaluate("() => (window.doomApi && doomApi.getView()) ? doomApi.getView() : null")
             except Exception:
                 return None
+            if view is not None:
+                self.view_data = view
+            return view
+
+    def grab_frame(self):
+        """Скриншот игрового canvas -> JPEG в кэш (для визуализации на :7980)."""
+        if not self.viz_enabled:
+            return
+        now = time.time()
+        if now - self.frame_ts < 0.25:      # ~4 fps максимум, чтобы не душить игру
+            return
+        with self.lock:
+            if self.page is None:
+                return
+            try:
+                data_url = self.page.evaluate(
+                    "() => { try { return (window.doomApi && doomApi.screenshot) ? doomApi.screenshot('image/jpeg', 0.6) : null; } catch (e) { return null; } }")
+            except Exception:
+                return
+        if not data_url or not isinstance(data_url, str) or "," not in data_url:
+            return
+        try:
+            raw = base64.b64decode(data_url.split(",", 1)[1])
+            if PILImage is not None:
+                im = PILImage.open(io.BytesIO(raw))
+                if im.width > 640:
+                    im = im.resize((640, int(640 * im.height / im.width)))
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, "JPEG", quality=70)
+                raw = buf.getvalue()
+            self.frame_jpeg = raw
+            self.frame_ts = time.time()
+        except Exception:
+            pass
 
     def apply_action(self, action_idx, look_yaw=0.0, run_hold=False):
         with self.lock:
@@ -796,7 +885,10 @@ class Trainer(threading.Thread):
         self.stats = {
             "generation": 0, "bestFitnessEver": None, "history": [],
             "episodes": 0, "status": "idle", "note": "",
+            "mindLoadedAt": None, "lastMindSave": None,
         }
+        # текущий активный мозг (геном), для визуализации на :7980
+        self.current_brain = {"key": None, "fitness": None, "nodes": 0, "conns": 0, "gen": 0}
 
     def stop(self):
         self.stop_event.set()
@@ -804,14 +896,37 @@ class Trainer(threading.Thread):
     def pause(self, on=True):
         (self.paused.set if on else self.paused.clear)()
 
+    # ---- мозг: build_phenotype вместо несуществующего genome.activate()
+
+    @staticmethod
+    def make_phenotype(genome, config):
+        """neat-python 2.x: у генома нет .activate() — собираем FeedForwardNetwork."""
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+        return net
+
+    def describe_genome(self, genome, gen):
+        try:
+            self.current_brain = {
+                "key": int(genome.key) if isinstance(genome.key, (int, float)) else str(genome.key),
+                "fitness": round(float(genome.fitness or 0.0), 3),
+                "nodes": len(genome.nodes),
+                "conns": len(genome.connections),
+                "gen": gen,
+            }
+        except Exception:
+            pass
+
     # ---- environment step
 
-    def run_episode(self, genome, cfg, br):
+    def run_episode(self, genome, cfg, br, config=None):
         ppo_cfg = cfg["ppo"]
         steps = int(ppo_cfg["steps_per_episode"])
         dt = float(ppo_cfg["dt"])
         rew = ppo_cfg["reward"]
         head = PPOHead(ppo_cfg, self.NUM_OUTPUTS - 1)
+
+        net = self.make_phenotype(genome, config)   # FIX: activate() у генома нет
+        self.describe_genome(genome, self.stats["generation"])
 
         feat_stats = [[0.0, 1.0] for _ in range(self.feature_count)]
         total_reward = 0.0
@@ -837,10 +952,11 @@ class Trainer(threading.Thread):
                 feat_stats[i] = [m, sd]
             feats_n = normalize_feats(feats, feat_stats)
 
-            logits = genome.activate(feats_n)
+            logits = list(net.activate(feats_n))
             action, logp, _probs = head.act_from(logits, feats_n)
             yaw_delta = clamp(logits[self.NUM_OUTPUTS - 1], -25.0, 25.0) * 4.0
             br.apply_action(action, look_yaw=yaw_delta)
+            br.grab_frame()      # кадр для визуализации (:7980)
 
             reward = float(rew.get("time", -0.002))
             if prev_raw is not None:
@@ -904,11 +1020,37 @@ class Trainer(threading.Thread):
             try:
                 br.launch_game(opts)
                 time.sleep(1.5)
-                fit, _info = self.run_episode(genome, cfg, br)
+                fit, _info = self.run_episode(genome, cfg, br, config=config)
                 genome.fitness = fit
             except Exception as e:
                 self.state.log("episode error: %s" % e)
                 genome.fitness = -100.0
+
+    # ---- автосейв / автолоад мозга (gzip+pickle состояния Population)
+
+    def mind_save(self, pop):
+        """Автосейв мозга: полное состояние популяции (generation+config+population+species)."""
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            ck = neat.Checkpointer(os.path.join(STATE_DIR, "mind"))
+            ck.save_checkpoint(pop.config, pop.population, pop.species, pop.generation)
+            self.stats["lastMindSave"] = now_iso()
+            self.stats["mindGeneration"] = pop.generation
+        except Exception as e:
+            self.state.log("автосейв мозга не удался: %s" % e)
+
+    @staticmethod
+    def mind_load(config):
+        """Автозагрузка мозга: возвращает Population с восстановленным состоянием или None."""
+        if not os.path.exists(MIND_PATH):
+            return None
+        try:
+            restored = neat.Checkpointer.restore_checkpoint(MIND_PATH, new_config=config)
+            print("doom_neat: мозг загружен, продолжаем с поколения %d" % restored.generation)
+            return restored
+        except Exception as e:
+            print("doom_neat: автозагрузка мозга не удалась (%s) — старт с нуля" % e)
+            return None
 
     def run(self):
         self.stats["status"] = "running"
@@ -934,37 +1076,47 @@ class Trainer(threading.Thread):
             f.write(neat_config_text(nc, self.feature_count, self.NUM_OUTPUTS))
         config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                              neat.DefaultSpeciesSet, neat.DefaultStagnation, tmp_path)
-        pop = neat.Population(config)
+
+        # АВТОЗАГРУЗКА мозга: продолжаем обучение с сохранённой популяции
+        pop = None
+        if cfg.get("mind", {}).get("autoLoad", True):
+            pop = self.mind_load(config)
+            if pop is not None:
+                self.stats["mindLoadedAt"] = now_iso()
+                self.stats["generation"] = pop.generation
+                self.state.log("автозагрузка мозга: продолжение с поколения %d" % pop.generation)
+        if pop is None:
+            pop = neat.Population(config)
         pop.add_reporter(neat.StdOutReporter(False))
         reporter = neat.StatisticsReporter()
         pop.add_reporter(reporter)
+
         try:
             import pickle
             bp = BEST_PATH + ".pkl"
             if os.path.exists(bp):
                 with open(bp, "rb") as f:
                     g = pickle.load(f)
-                sp0 = next(iter(pop.species.species.values())); sp0.add(g, 999999)
+                sp0 = next(iter(pop.species.species.values())); sp0.update(g, {g.key: g})
                 self.state.log("загружен лучший геном из чекпоинта")
         except Exception as e:
             self.state.log("checkpoint: %s" % e)
 
-        gen = 0
+        gen = pop.generation
         while not self.stop_event.is_set():
-            gen += 1
-            self.stats["generation"] = gen
-            self.state.log("=== поколение %d (pop=%d) ===" % (gen, sum(len(s.members) for s in pop.species.species.values())))
+            self.stats["generation"] = pop.generation
+            self.state.log("=== поколение %d (pop=%d) ===" % (pop.generation + 1, len(pop.population)))
             try:
                 winner = pop.run(lambda gs, c: self.eval_genomes(gs, c), 1)
             except Exception as e:
                 self.state.log("pop.run ошибка: %s\n%s" % (e, traceback.format_exc()))
                 break
-            fits = [g.fitness or 0.0 for s in pop.species.species.values() for g in s.members.values()]
+            fits = [g.fitness or 0.0 for g in pop.population.values()]
             best_fit = max(fits) if fits else 0.0
             avg = sum(fits) / len(fits) if fits else 0.0
             prev_best = self.stats["bestFitnessEver"]
             self.stats["bestFitnessEver"] = best_fit if prev_best is None else max(prev_best, best_fit)
-            self.stats["history"].append({"gen": gen, "best": round(best_fit, 2), "avg": round(avg, 2)})
+            self.stats["history"].append({"gen": pop.generation, "best": round(best_fit, 2), "avg": round(avg, 2)})
             if winner is not None:
                 try:
                     import pickle
@@ -975,6 +1127,11 @@ class Trainer(threading.Thread):
                 except Exception:
                     pass
             self.state.save_checkpoint(pop)
+            # АВТОСЕЙВ мозга после каждого поколения (настраивается на панели)
+            mind_cfg = cfg.get("mind", {})
+            every = max(1, int(mind_cfg.get("saveEveryGenerations", 1)))
+            if mind_cfg.get("autoSave", True) and pop.generation % every == 0:
+                self.mind_save(pop)
         self.stats["status"] = "stopped"
         try:
             br.stop_all()
