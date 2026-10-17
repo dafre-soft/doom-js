@@ -1,5 +1,5 @@
 {
-  "version": "v1.1260",
+  "version": "v1.1261",
   "files": {
     "assets": [
       "/assets/uzdoom/doom/sprite/chip1.png",
@@ -45,7 +45,8 @@
       "/css/doomMenu.css"
     ],
     "js": [
-      "/js/boot/prelude.js",
+      "/js/engine/entity/abstractLoadedEntity.js",
+      "/js/engine/entity/object3d.js",
       "/js/engine/entity/instance.js",
       "/js/engine/entity/interaction.js",
       "/js/engine/entity/face.js",
@@ -78,6 +79,7 @@
       "/js/engine/matrix.js",
       "/js/engine/zBuffer.js",
       "/js/engine/renderer/faceDepthQueue.js",
+      "/js/engine/renderer/object3dRendererBase.js",
       "/js/engine/renderer/object3dRendererFast.js",
       "/js/engine/renderer/object3dRendererFull.js",
       "/js/engine/renderer/object3dRendererFlat.js",
@@ -158,6 +160,8 @@
       "/js/doom/wad/wadRegistry.js",
       "/js/doom/wad/convert/wadConstants.js",
       "/js/doom/wad/doomWadEditions.js",
+      "/js/doom/wad/profile/abstractGameProfile.js",
+      "/js/doom/wad/profile/defaultGameProfile.js",
       "/js/doom/wad/profile/doomGameProfile.js",
       "/js/doom/wad/profile/tntGameProfile.js",
       "/js/doom/wad/profile/plutoniaGameProfile.js",
@@ -195,6 +199,7 @@
       "/js/doom/wad/convert/wadMeshBuilder.js",
       "/js/doom/wad/convert/wadMapAnalyzer.js",
       "/js/doom/wad/convert/wadStaticMapBuilder.js",
+      "/js/doom/wad/convert/abstractMoverBuilder.js",
       "/js/doom/wad/convert/wadDoorBuilder.js",
       "/js/doom/wad/convert/wadLiftBuilder.js",
       "/js/doom/wad/convert/wadRisingFloorBuilder.js",

@@ -324,16 +324,21 @@ class DoomJsApi {
 
     /**
      * Named editions the API can fetch by URL without any profile/registry
-     * lookup. Fill in your own local links (serve the .wad over http, e.g.
-     * put it next to the site: "/wads/doom.wad"); a file:// path is offered
-     * through the system file picker where the browser allows it.
+     * lookup — plain links to .wad files. The default set points at the
+     * canonical FreeDOOM release URLs (CORS-enabled), so launch({wadId:'doom'})
+     * works out of the box with no local files and no IndexedDB profiles.
+     * Override locally: doomApi.addWad('doom', '/wads/doom1.wad') or edit
+     * doomApi.WADS directly; an unknown wadId also falls back to
+     * '/wads/<id>.wad' served next to the site.
      */
     static BUILT_IN_WADS = {
-        doom:      {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
-        doom1:     {url: '/wads/doom1.wad',      name: 'doom1.wad',      profile: 'doom'},
-        doom2:     {url: '/wads/doom2.wad',      name: 'doom2.wad',      profile: 'doom'},
-        freedoom:  {url: '/wads/freedoom1.wad',  name: 'freedoom1.wad',  profile: 'freedoom'},
-        heretic:   {url: '/wads/heretic.wad',    name: 'heretic.wad',    profile: 'heretic'},
+        doom:      {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        doom1:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        doom2:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
+        freedoom:  {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        freedoom1: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
+        freedoom2: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
+        heretic:   {url: 'https://github.com/zsniper/heretic-sdpa-release/raw/master/heretic.wad',                             name: 'heretic.wad',       profile: 'heretic'},
         tnt:       {url: '/wads/tnt.wad',        name: 'tnt.wad',        profile: 'tnt'},
         plutonia:  {url: '/wads/plutonia.wad',   name: 'plutonia.wad',   profile: 'plutonia'}
     };
@@ -373,9 +378,9 @@ class DoomJsApi {
             };
         }
 
-        // 3. Named editions load straight from the served /wads/ folder — no
-        // profiles registry, no IndexedDB: fetch the link and parse it. The
-        // table is editable at runtime: doomApi.addWad('my.wad', '/wads/my.wad', 'doom').
+        // 3. Named editions load straight from a link — no profiles registry,
+        // no IndexedDB: fetch the .wad and parse it (BUILT_IN_WADS table,
+        // editable at runtime with doomApi.addWad(name, url, profileCode)).
         const wanted = String(options.wadId ?? '').toLowerCase();
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
@@ -386,7 +391,20 @@ class DoomJsApi {
             };
         }
 
-        // 4. Anything else: a WAD previously imported into storage, by id or title.
+        // 4. Unknown short name: try '/wads/<name>.wad' served next to the site.
+        if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
+            try {
+                return {
+                    wadFile: await this._fetchWadFile('/wads/' + wanted + '.wad'),
+                    meta:    {id: wanted, name: wanted + '.wad'},
+                    profileCode: DoomJsApi._profileCodeOption(options)
+                };
+            } catch (error) {
+                console.warn('doomApi.launch: /wads/' + wanted + '.wad not available', error);
+            }
+        }
+
+        // 5. Anything else: a WAD previously imported into storage, by id or title.
         let match = null;
         try {
             const registry = await new WadRegistry(new WadStorage()).init();
