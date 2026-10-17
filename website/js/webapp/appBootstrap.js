@@ -148,28 +148,41 @@ class AppBootstrap {
      * written directly here, never from inside an injected script.
      */
     static async loadScriptsInOrder(urls) {
-        const sources  = await Promise.all(urls.map((url) => AppBootstrap._fetchScriptText(url)));
+        // Fully async: every file starts executing the moment its own text
+        // arrived — no waiting for the whole batch. The chain below keeps the
+        // STRICT list order for execution: script N+1 runs only after script N
+        // finished evaluating, while all the downloads already race in
+        // parallel on the shared HTTP budget.
         const globalEval = eval;
 
         window.__doomLoadedScripts ??= new Set();
         const loaded = window.__doomLoadedScripts;
 
-        for (let index = 0; index < sources.length; index++) {
-            const source = sources[index];
-            if (loaded.has(urls[index])) {
-                continue;   // already evaluated in this JS context
-            }
-            if (source === null) {
-                console.error('AppBootstrap - failed to fetch script ' + urls[index]);
-                continue;   // a failed download: skip, keep the order of the rest
-            }
-            try {
-                loaded.add(urls[index]);
-                globalEval(source + "\n//# sourceURL=" + urls[index]);
-            } catch (error) {
-                console.error('AppBootstrap - error executing script ' + urls[index], error);
-            }
-        }
+        let chain = Promise.resolve();
+        const tasks = urls.map((url) => {
+            const download = AppBootstrap._fetchScriptText(url);
+
+            chain = chain.then(async () => {
+                if (loaded.has(url)) {
+                    return;     // already evaluated in this JS context
+                }
+                const source = await download;
+                if (source === null) {
+                    console.error('AppBootstrap - failed to fetch script ' + url);
+
+                    return;     // a failed download: skip, keep the order of the rest
+                }
+                try {
+                    loaded.add(url);
+                    globalEval(source + "\n//# sourceURL=" + url);
+                } catch (error) {
+                    console.error('AppBootstrap - error executing script ' + url, error);
+                }
+            });
+
+            return chain;
+        });
+        await Promise.all(tasks);
     }
 
     static _fetchScriptText(url) {

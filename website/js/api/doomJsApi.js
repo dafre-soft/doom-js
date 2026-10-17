@@ -123,12 +123,20 @@ class DoomJsApi {
         // 'heretic', 'tnt', 'plutonia'), or is sniffed from the WAD header.
         // Resolved lazily, after the whole boot finished — during a launch
         // fired early all the profile classes are guaranteed to be evaluated.
-        const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
-        const list       = ((typeof GameProfileList === 'function') ? new GameProfileList() : null);
-        let profile      = ((list !== null) ? list.getByCode(wantedCode) : null);
-        if ((profile === null) || (wantedCode === null)) {
-            // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
-            profile = ((list !== null) ? list.getForWad(wadFile) : null);
+        // options.raw === true: no profiles at all — a plain default doom-format
+        // profile straight from the WAD bytes (file:// / http links).
+        let profile = null;
+        if (options.raw !== true) {
+            const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
+            const list       = ((typeof GameProfileList === 'function') ? new GameProfileList() : null);
+            profile          = ((list !== null) ? list.getByCode(wantedCode) : null);
+            if ((profile === null) || (wantedCode === null)) {
+                // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
+                profile = ((list !== null) ? list.getForWad(wadFile) : null);
+            }
+        }
+        if ((profile === null) || (profile === undefined)) {
+            profile = new DefaultGameProfile();
         }
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {

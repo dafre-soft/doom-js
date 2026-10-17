@@ -26,29 +26,40 @@ class GameProfileList {
         if ((GameProfileList.__instance !== null) && (GameProfileList.__instance !== undefined)) {
             return GameProfileList.__instance;
         }
-        const byCode = GameProfileList._byCode();
-        this._profiles = [
-            byCode.heretic,
-            byCode.freedoom,
-            byCode.tnt,
-            byCode.plutonia,
-            byCode.doom
-        ];
-        this._fallback = new DefaultGameProfile();
+        // The profile objects are NOT built here anymore: the boot used to
+        // touch this class from doomImageAssets.load() before the profile
+        // files finished evaluating ("can't access lexical declaration …").
+        // Everything is resolved lazily, per call — see _make / _byCode.
         GameProfileList.__instance = this;
     }
 
-    // Built lazily on first use — see the note above the class.
+    // Built lazily on first use — see the note above the class. Every entry is
+    // wrapped in try/catch: during a fast parallel boot some profile classes
+    // may still be evaluating, so we fall back to DefaultGameProfile (a plain
+    // doom-format WAD) instead of crashing the whole launch.
+    static _make(name) {
+        try {
+            const Ctor = globalThis[name];
+            if (typeof Ctor === 'function') {
+                return new Ctor();
+            }
+        } catch (error) {
+            console.warn('GameProfileList: profile "' + name + '" not ready yet', error);
+        }
+
+        return new DefaultGameProfile();
+    }
+
     static _byCode() {
         if ((GameProfileList.__cache ?? null) === null) {
             GameProfileList.__cache = {
-                heretic:   new HereticGameProfile(),
-                freedoom:  new FreedoomGameProfile(),
-                tnt:       new TntGameProfile(),
-                plutonia:  new PlutoniaGameProfile(),
-                doom:      new DoomGameProfile(),
-                doom1:     new DoomGameProfile(),
-                doom2:     new DoomGameProfile(),
+                heretic:   GameProfileList._make('HereticGameProfile'),
+                freedoom:  GameProfileList._make('FreedoomGameProfile'),
+                tnt:       GameProfileList._make('TntGameProfile'),
+                plutonia:  GameProfileList._make('PlutoniaGameProfile'),
+                doom:      GameProfileList._make('DoomGameProfile'),
+                doom1:     GameProfileList._make('DoomGameProfile'),
+                doom2:     GameProfileList._make('DoomGameProfile'),
                 default:   new DefaultGameProfile()
             };
         }
@@ -56,18 +67,35 @@ class GameProfileList {
         return GameProfileList.__cache;
     }
 
+    _orderedCodes() {
+        return ['heretic', 'freedoom', 'tnt', 'plutonia', 'doom'];
+    }
+
+    // The list, resolved on every call (cheap: the profile objects are cached
+    // in __cache once their classes exist). Never stored on the instance — an
+    // early `new GameProfileList()` at boot must not freeze a half-loaded set.
+    _profiles() {
+        const byCode = GameProfileList._byCode();
+
+        return this._orderedCodes().map((code) => byCode[code]);
+    }
+
+    _fallback() {
+        return new DefaultGameProfile();
+    }
+
     /**
      * @param {WadFile} wadFile
      * @returns {AbstractGameProfile}
      */
     getForWad(wadFile) {
-        for (const profile of this._profiles) {
+        for (const profile of this._profiles()) {
             if (profile.matchesWad(wadFile)) {
                 return profile;
             }
         }
 
-        return this._fallback;
+        return this._fallback();
     }
 
     /**
@@ -80,13 +108,13 @@ class GameProfileList {
         if ((direct !== undefined) && (direct !== null)) {
             return direct;
         }
-        for (const profile of this._profiles) {
+        for (const profile of this._profiles()) {
             if (profile.getCode() === code) {
                 return profile;
             }
         }
 
-        return this._fallback;
+        return this._fallback();
     }
 
     /**
@@ -96,6 +124,6 @@ class GameProfileList {
      * @returns {AbstractGameProfile[]}
      */
     getAll() {
-        return [...this._profiles, this._fallback];
+        return [...this._profiles(), this._fallback()];
     }
 }
