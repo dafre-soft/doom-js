@@ -129,7 +129,7 @@ class DoomJsApi {
         if (options.raw !== true) {
             const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
             const ListCtor   = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
-        const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
+            const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
             profile          = ((list !== null) ? list.getByCode(wantedCode) : null);
             if ((profile === null) || (wantedCode === null)) {
                 // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
@@ -323,6 +323,409 @@ class DoomJsApi {
         return this.draw(callback);
     }
 
+    // --- AI input: drive the player like a human (for bots / neural agents) ---
+
+    /**
+     * Hold or release a control, the way a key does; it keeps acting while held.
+     * The API owns virtual actions on the keyboard device ('api_forward', ...)
+     * that add to whatever a human presses — both work at once.
+     *
+     * @param {'forward'|'back'|'left'|'right'|'jump'|'crouch'|'run'|'use'|'attack'} key
+     * @param {boolean} pressed
+     */
+    setInput(key, pressed = true) {
+        const name = String(key).toLowerCase();
+        if (!DoomJsApi.INPUT_KEYS.includes(name)) {
+            throw new Error('doomApi.setInput: unknown key "' + name + '" — one of: ' + DoomJsApi.INPUT_KEYS.join(', '));
+        }
+        this._inputs[name] = (pressed === true);
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /**
+     * Set the movement axes directly, -1..+1 (analog stick semantics):
+     * move(x: strafe right, y: forward), plus optional look deltas in degrees.
+     * Overrides any held keys until the next setInput/stopMovement call.
+     */
+    setMove(moveX = 0, moveY = 0, lookYaw = 0, lookPitch = 0) {
+        this._moveX   = Math.max(-1, Math.min(1, Number(moveX)));
+        this._moveY   = Math.max(-1, Math.min(1, Number(moveY)));
+        this._lookYaw += Number(lookYaw);
+        this._lookPitch += Number(lookPitch);
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /** Zero the analog axes and release every held key. */
+    stopMovement() {
+        this._moveX = 0;
+        this._moveY = 0;
+        for (const key of DoomJsApi.INPUT_KEYS) {
+            this._inputs[key] = false;
+        }
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /**
+     * Wire the API's virtual actions into the game's input devices. Idempotent;
+     * runs after launch and whenever the inputs are rebuilt.
+     */
+    _applyVirtualInputs() {
+        const game = this._game;
+        if ((game === null) || (typeof game.getInputs !== 'function')) {
+            return;
+        }
+        const inputs = game.getInputs();
+        if ((inputs === null) || (inputs === undefined)) {
+            return;
+        }
+        if (!this._virtualBound) {
+            this._virtualBound = true;
+            const api = this;
+            const sampler = ((typeof game.getCommandSampler === 'function') ? game.getCommandSampler() : null);
+            // Virtual buttons ride the sampler: a button counts as pressed when
+            // either the device or the API holds it.
+            if ((sampler !== null) && (typeof sampler.addButton === 'function')) {
+                sampler.addButton('fire', () => api._inputs.attack);
+                sampler.addButton(UserCommand.JUMP,    () => api._inputs.jump);
+                sampler.addButton(UserCommand.CROUCH,  () => api._inputs.crouch);
+                sampler.addButton(UserCommand.RUN,     () => api._inputs.run);
+                sampler.addButton(UserCommand.ACTION,  () => api._inputs.use);
+            }
+            // The keyboard gains 'api_*' actions; Inputs reads them beside the real keys.
+            const keyboard = inputs._keyboard;
+            if ((keyboard !== undefined) && (keyboard !== null)) {
+                const defaults = {...AppInputKeyboard_privateDefaults(keyboard)};
+                for (const action of ['api_forward', 'api_backward', 'api_strafeLeft', 'api_strafeRight']) {
+                    if (defaults[action] === undefined) {
+                        defaults[action] = '';
+                    }
+                }
+                keyboard.setActionDefaults(defaults);
+            }
+        }
+        // Axes: patch the read once per game — the API values add to the device's.
+        if ((inputs._apiPatched !== true) && (typeof inputs.readJoy1X === 'function')) {
+            inputs._apiPatched = true;
+            const baseX = inputs.readJoy1X.bind(inputs);
+            const baseY = inputs.readJoy1Y.bind(inputs);
+            const api = this;
+            inputs.readJoy1X = function () {
+                const k = ((this._keyboard !== undefined) ? this._keyboard : null);
+                let extra = 0;
+                if (k !== null) {
+                    extra = (k.readAction('api_strafeRight') ? 1 : 0) - (k.readAction('api_strafeLeft') ? 1 : 0);
+                }
+                return clampAxis(baseX() + (extra !== 0 ? extra : api._moveX));
+            };
+            inputs.readJoy1Y = function () {
+                const k = ((this._keyboard !== undefined) ? this._keyboard : null);
+                let extra = 0;
+                if (k !== null) {
+                    extra = (k.readAction('api_forward') ? 1 : 0) - (k.readAction('api_backward') ? 1 : 0);
+                }
+                return clampAxis(baseY() + (extra !== 0 ? extra : api._moveY));
+            };
+        }
+        // Push the current key state into the virtual actions (a Set-backed
+        // table would be cleaner, but the keyboard maps actions to key codes;
+        // instead keep a live reader list on the keyboard object itself).
+        if ((inputs._keyboard !== undefined) && (inputs._keyboard !== null)) {
+            inputs._keyboard._apiActions = this._inputs;
+            const k = inputs._keyboard;
+            if (k._apiReadPatched !== true) {
+                k._apiReadPatched = true;
+                const baseRead = k.readAction.bind(k);
+                k.readAction = function (action) {
+                    if ((this._apiActions !== undefined) && DoomJsApi.VIRTUAL_ACTION_KEYS[action] !== undefined) {
+                        return this._apiActions[DoomJsApi.VIRTUAL_ACTION_KEYS[action]] === true;
+                    }
+
+                    return baseRead(action);
+                };
+            }
+        }
+
+        return this;
+    }
+
+    /**
+     * One-shot press: down for holdMs, then released. Async so an agent can
+     * await it: `await doomApi.press('attack', 120)`.
+     */
+    async press(key, holdMs = 60) {
+        this.setInput(key, true);
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, holdMs)));
+        this.setInput(key, false);
+
+        return this;
+    }
+
+    /** Release every held control. */
+    releaseAll() {
+        for (const key of DoomJsApi.INPUT_KEYS) {
+            this.setInput(key, false);
+        }
+
+        return this;
+    }
+
+    /** The current held-key map {forward: bool, ...}. */
+    getInputs() {
+        return {...this._inputs};
+    }
+
+    /**
+     * Turn the view by degrees (yaw += dx, pitch clamped += dy), relative.
+     */
+    look(dx = 0, dy = 0) {
+        const user = this._requireUser();
+        user.yaw   = DoomJsApi._normAngle(user.yaw + dx);
+        user.pitch = Math.max(-89, Math.min(89, user.pitch + dy));
+
+        return this;
+    }
+
+    /** Point the view at absolute yaw/pitch degrees (yaw 0..360, pitch -89..89). */
+    setOrientation(yaw = null, pitch = null) {
+        const user = this._requireUser();
+        if (yaw !== null) {
+            user.yaw = DoomJsApi._normAngle(Number(yaw));
+        }
+        if (pitch !== null) {
+            user.pitch = Math.max(-89, Math.min(89, Number(pitch)));
+        }
+
+        return this;
+    }
+
+    /** Aim the view at a world position {x, y, z} (engine coords, metres). */
+    faceTarget(target) {
+        const user = this._requireUser();
+        const pos  = DoomJsApi._asPosition(target);
+        const dx   = pos.x - user.x;
+        const dz   = pos.z - user.z;
+        const dy   = pos.y - user.y;
+        user.yaw   = DoomJsApi._normAngle(Math.atan2(dz, dx) * 180 / Math.PI);
+        const flat = Math.sqrt(dx * dx + dz * dz);
+        user.pitch = Math.max(-89, Math.min(89, Math.atan2(dy, Math.max(flat, 1e-6)) * 180 / Math.PI));
+
+        return this;
+    }
+
+    /**
+     * Teleport the player to a spot and snap it onto the sector's floor there.
+     *
+     * @param {{x?: number, y?: number, z?: number, yaw?: number}} target — engine
+     *        coords (x/z the horizontal plane, y up); or Doom map coords via
+     *        {doomX, doomY}. Pass only x/z to keep the current height.
+     */
+    teleportTo(target) {
+        const user = this._requireUser();
+        const SCALE = (typeof WadConstants !== 'undefined') ? WadConstants.SCALE : window.WadConstants.SCALE;
+        let x = user.x, y = user.y, z = user.z;
+        if ((target.doomX !== undefined) || (target.doomY !== undefined)) {
+            x = (target.doomX !== undefined) ? (target.doomX * SCALE) : x;
+            z = (target.doomY !== undefined) ? (target.doomY * SCALE) : z;
+        } else {
+            if (target.x !== undefined) { x = Number(target.x); }
+            if (target.y !== undefined) { y = Number(target.y); }
+            if (target.z !== undefined) { z = Number(target.z); }
+        }
+        user.x = x;
+        user.z = z;
+        // Snap onto the live floor of the sector under the landing point.
+        try {
+            const heights = this._levelHeights();
+            if (heights !== null) {
+                const si = heights.sectorIndexAt(x, z);
+                if (si !== null) {
+                    y = heights.floorOf(si);
+                }
+            }
+        } catch (error) {
+            console.warn('doomApi.teleportTo: floor snap skipped', error);
+        }
+        user.y = y;
+        if (target.yaw !== undefined) {
+            user.yaw = DoomJsApi._normAngle(Number(target.yaw));
+        }
+
+        return this;
+    }
+
+    /**
+     * Warp to another level of the running WAD by its lump name ('E1M2', 'MAP05').
+     * Keeps the player's equipment and speed settings.
+     */
+    async warpToLevel(levelCode) {
+        const game = this._requireGame();
+        const wadFile = game.getWadFile();
+        const names = ((wadFile !== null) ? wadFile.getLevelNames() : []);
+        const code = String(levelCode).toUpperCase();
+        if (!names.includes(code)) {
+            throw new Error('doomApi.warpToLevel: no level "' + code + '" in this WAD — available: ' + names.join(', '));
+        }
+        const snapshot = game.captureSnapshot();
+        game.setRestoreSnapshot(snapshot);
+
+        return await game.startFromWad(wadFile, code, null, null, null, game.getProfile());
+    }
+
+    /** Restart the current level, keeping the equipment. */
+    async restartLevel() {
+        return await this.warpToLevel(this._requireGame().getLevelCode());
+    }
+
+    /** Switch skill (1..5) right away. */
+    setSkill(skill) {
+        const value = Math.max(1, Math.min(5, Number(skill)));
+        this._skill = value;
+        const role = this._requireGame().getRole();
+        if ((role !== null) && (typeof role.useProfile === 'function')) {
+            role.useProfile(this._requireGame().getProfile(), null, value);
+        }
+
+        return this;
+    }
+
+    /** Give the player a weapon by code (e.g. 'shotgun'); returns whether it exists. */
+    giveWeapon(code) {
+        const user = this._requireUser();
+        user.declareWeapon(code);
+        user.giveWeapon(code);
+
+        return user.hasWeapon(code);
+    }
+
+    /** Put a weapon in the hands (no-op when the player lacks it). */
+    selectWeapon(code) {
+        const user = this._requireUser();
+        user.setActiveWeapon(code);
+
+        return user.getActiveWeapon();
+    }
+
+    /** Refill health (and optionally armor) — god-mode helper for agents. */
+    heal(energy = 100, armor = null) {
+        const user = this._requireUser();
+        user.setEnergy(Math.min(Number(energy), user.getMaxEnergy()));
+        if (armor !== null) {
+            user.setArmor(Math.min(Number(armor), user.getMaxArmor()));
+        }
+
+        return this;
+    }
+
+    /** Respawn a dead player at its start position with default equipment. */
+    respawn() {
+        const user = this._requireUser();
+        if (user.isDead()) {
+            user.kill();
+        }
+        user.setVitals(user.getMaxEnergy(), false, 0, 0);
+
+        return this;
+    }
+
+    /**
+     * A compact observation for a learning agent: numbers only, one object.
+     * Same data as getView() but trimmed for a policy network's input.
+     */
+    observe() {
+        const view = this.getView();
+        if (view === null) {
+            return null;
+        }
+        const p = view.player;
+
+        return {
+            level: view.levelCode,
+            x: p.x, y: p.y, z: p.z,
+            yaw: p.yaw, pitch: p.pitch,
+            health: p.health, armor: p.armor, dead: p.dead,
+            weapon: p.weapon, ammo: p.ammo.current,
+            targets: view.things.slice(0, 64).map((t) => ({
+                kind: t.kind, x: t.x, y: t.y, z: t.z,
+                sx: ((t.screen !== null) ? t.screen.x : -1),
+                sy: ((t.screen !== null) ? t.screen.y : -1),
+                depth: ((t.screen !== null) ? t.screen.depth : -1)
+            }))
+        };
+    }
+
+    /**
+     * Subscribe to per-frame events without drawing anything: the callback gets
+     * the same info object the overlay receives. Returns an unsubscribe function.
+     */
+    onFrame(callback) {
+        if (typeof callback !== 'function') {
+            throw new Error('doomApi.onFrame: needs a function');
+        }
+        this._frameListeners.add(callback);
+        this._installFrameHook();
+
+        return () => this._frameListeners.delete(callback);
+    }
+
+    /** Wait until a condition over the view holds (or timeout): AI scripting. */
+    async waitFor(condition, options = {}) {
+        const timeoutMs = options.timeoutMs ?? 10000;
+        const fn = (typeof condition === 'function')
+            ? condition
+            : (() => this.isRunning() && (this.getLevelCode() === String(condition).toUpperCase()));
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const view = this.getView();
+            if ((view !== null) && fn(view)) {
+                return view;
+            }
+            await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 50));
+        }
+
+        return null;
+    }
+
+    /** List the levels inside the running WAD. */
+    getLevels() {
+        const wadFile = this._requireGame().getWadFile();
+
+        return ((wadFile !== null) ? wadFile.getLevelNames() : []);
+    }
+
+    /** A PNG data-URL of what the player sees right now — feed it to a vision model. */
+    screenshot(mimeType = 'image/png', quality = 0.8) {
+        const game = this._requireGame();
+        const engine = game.getPresentation().getEngine();
+        const canvas = engine.scrCanvas;
+        if ((canvas === undefined) || (canvas === null)) {
+            throw new Error('doomApi.screenshot: no game canvas yet');
+        }
+
+        return canvas.toDataURL(mimeType, quality);
+    }
+
+    /** Pause / resume the simulation. */
+    setPaused(paused = true) {
+        const game = this._requireGame();
+        if (paused === true) {
+            game.freeze();
+        } else {
+            game.unfreeze(true);
+        }
+
+        return this;
+    }
+
+    isPaused() {
+        return ((this._game !== null) && this._game.isPaused());
+    }
+
     // --- Internals ---
 
     /**
@@ -334,16 +737,35 @@ class DoomJsApi {
      * doomApi.WADS directly; an unknown wadId also falls back to
      * '/wads/<id>.wad' served next to the site.
      */
+    // CORS-friendly download hosts, tried in order for the repo references
+    // below: jsDelivr mirrors GitHub repo files and answers with
+    // Access-Control-Allow-Origin: *; github.com release-download links do NOT
+    // (the browser blocks them — "NetworkError when attempting to fetch").
+    // Entries may also carry plain 'urls' strings (any CORS-enabled host) and a
+    // 'local' path served next to the site. The local copy is the reliable one:
+    // drop freedoom-phase-1.wad etc. into website/wads/ and no download at all
+    // is needed. A runtime override always wins:
+    //   doomApi.addWad('dum', '/wads/DOOM.WAD', 'doom');
+    static CDN_HOSTS = [
+        (u) => 'https://cdn.jsdelivr.net/gh/' + u.owner + '/' + u.repo + '@' + u.ref + '/' + u.path,
+        (u) => 'https://raw.githubusercontent.com/' + u.owner + '/' + u.repo + '/' + u.ref + '/' + u.path
+    ];
+
+    static _cdn(owner, repo, ref, path) {
+        return {owner: owner, repo: repo, ref: ref, path: path};
+    }
+
     static BUILT_IN_WADS = {
-        doom:      {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
-        doom1:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
-        doom2:     {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
-        freedoom:  {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
-        freedoom1: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom-0.12.1.wad',     name: 'freedoom1.wad',     profile: 'freedoom'},
-        freedoom2: {url: 'https://github.com/freedooms-team/doom_freedom/releases/download/v0.12.1/freedoom2-0.12.1.wad',    name: 'freedoom2.wad',     profile: 'freedoom'},
-        heretic:   {url: 'https://github.com/zsniper/heretic-sdpa-release/raw/master/heretic.wad',                             name: 'heretic.wad',       profile: 'heretic'},
-        tnt:       {url: '/wads/tnt.wad',        name: 'tnt.wad',        profile: 'tnt'},
-        plutonia:  {url: '/wads/plutonia.wad',   name: 'plutonia.wad',   profile: 'plutonia'}
+        doom:      {local: '/wads/freedoom1.wad', urls: ['https://distro.ibiblio.org/rootplex/dooM/freedoom1.wad'], name: 'freedoom1.wad', profile: 'freedoom'},
+        doom1:     {local: '/wads/doom1.wad',     urls: ['https://distro.ibiblio.org/rootplex/dooM/doom1.wad'],      name: 'doom1.wad',     profile: 'doom'},
+        doom2:     {local: '/wads/freedoom2.wad', urls: ['https://distro.ibiblio.org/rootplex/dooM/freedoom2.wad'],  name: 'freedoom2.wad', profile: 'freedoom'},
+        freedoom:  {local: '/wads/freedoom1.wad', urls: [],                                                    name: 'freedoom1.wad', profile: 'freedoom'},
+        freedoom1: {local: '/wads/freedoom1.wad', urls: [],                                                    name: 'freedoom1.wad', profile: 'freedoom'},
+        freedoom2: {local: '/wads/freedoom2.wad', urls: [],                                                    name: 'freedoom2.wad', profile: 'freedoom'},
+        heretic:   {local: '/wads/heretic.wad',   urls: ['https://distro.ibiblio.org/rootplex/dooM/heretic.wad'],  name: 'heretic.wad',   profile: 'heretic'},
+        hexen:     {local: '/wads/hexen.wad',     urls: [],                                                    name: 'hexen.wad',     profile: 'hexen'},
+        tnt:       {local: '/wads/tnt.wad',       urls: [],                                                    name: 'tnt.wad',       profile: 'tnt'},
+        plutonia:  {local: '/wads/plutonia.wad',  urls: [],                                                    name: 'plutonia.wad',  profile: 'plutonia'}
     };
 
     /**
@@ -359,38 +781,47 @@ class DoomJsApi {
             };
         }
 
-        // 2. A link to the .wad file — http(s), or file:// when the page runs
-        // from the filesystem. No profiles, no IndexedDB registry: fetch and parse.
-        const url = options.url ?? options.path ?? options.file;
+        // 2. A link to the .wad file — http(s) or a site-local '/wads/x.wad'.
+        // file:// links are impossible from an http page (the browser blocks
+        // them); use pickAndLaunch() or copy the file next to the site instead.
+        // Every spelling of the option is accepted: wadUrl / url / path / src.
+        const url = options.wadUrl ?? options.url ?? options.path ?? options.src;
         if ((url !== undefined) && (url !== null)) {
             const wanted = DoomJsApi._profileCodeOption(options);
             if (String(url).toLowerCase().startsWith('file://')) {
-                const buffer = await DoomJsApi._readFileUrl(url);
-
-                return {
-                    wadFile: new (window.WadFile)(buffer).parse(),
-                    meta:    {id: wanted ?? 'file', name: DoomJsApi._fileNameOf(url)},
-                    profileCode: wanted
-                };
+                throw new Error('doomApi.launch: browsers forbid reading "' + url + '" from an http page.'
+                    + ' Copy the .wad next to the site and pass {url: "/wads/DOOM.WAD"}, or call await doomApi.pickAndLaunch({levelCode: "E1M1"})'
+                    + ' which opens the native file dialog once.');
             }
 
             return {
-                wadFile: await this._fetchWadFile(url),
+                wadFile: await DoomJsApi._fetchFirstAvailable([url]),
                 meta:    {id: wanted ?? 'url', name: DoomJsApi._fileNameOf(url)},
                 profileCode: wanted
+            };
+        }
+
+        // 2b. A local file picked earlier via pickWadFile() / pickAndLaunch().
+        if ((options.file !== undefined) && (typeof options.file.arrayBuffer === 'function')) {
+            const buffer = await options.file.arrayBuffer();
+
+            return {
+                wadFile: new (window.WadFile)(buffer).parse(),
+                meta:    {id: 'file', name: options.file.name},
+                profileCode: DoomJsApi._profileCodeOption(options)
             };
         }
 
         // 3. Named editions load straight from a link — no profiles registry,
         // no IndexedDB: fetch the .wad and parse it (BUILT_IN_WADS table,
         // editable at runtime with doomApi.addWad(name, url, profileCode)).
-        const wanted = String(options.wadId ?? '').toLowerCase();
+        const wanted = String(options.wadId ?? options.wad ?? options.name ?? '').toLowerCase();
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
             return {
-                wadFile: await this._fetchWadFile(builtIn.url),
+                wadFile: await DoomJsApi._fetchFirstAvailable(DoomJsApi._candidateUrls(builtIn)),
                 meta:    {id: wanted, name: builtIn.name},
-                profileCode: builtIn.profile
+                profileCode: DoomJsApi._profileCodeOption(options) ?? builtIn.profile
             };
         }
 
@@ -398,7 +829,7 @@ class DoomJsApi {
         if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
             try {
                 return {
-                    wadFile: await this._fetchWadFile('/wads/' + wanted + '.wad'),
+                    wadFile: await DoomJsApi._fetchFirstAvailable(['/wads/' + wanted + '.wad']),
                     meta:    {id: wanted, name: wanted + '.wad'},
                     profileCode: DoomJsApi._profileCodeOption(options)
                 };
@@ -423,38 +854,124 @@ class DoomJsApi {
             console.warn('doomApi.launch: the WAD registry is unavailable', error);
         }
 
-        throw new Error('doomApi.launch: no WAD for "' + wanted + '" — pass {url: "/path/game.wad"} (http/file link) or one of: '
-            + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', ')
-            + '; register your own with doomApi.addWad(name, url, profileCode)');
+        throw new Error('doomApi.launch: no WAD for "' + wanted + '". Browsers forbid reading file:// links from an http page, so a local DOOM.WAD cannot be fetched by path. Working options:'
+            + '\n  1) copy the .wad next to the site and launch({url: "/wads/DOOM.WAD"}) or launch({wadId: "doom"}) — names fall back to /wads/<name>.wad;'
+            + '\n  2) await doomApi.pickAndLaunch({levelCode: "E1M1"}) — opens the native file dialog once, then starts the game;'
+            + '\n  3) host it over CORS-enabled http(s): addWad("dum", "https://…/DOOM.WAD") and launch({wadId: "dum"});'
+            + '\nKnown names: ' + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
     }
 
     /**
      * Register a downloadable WAD under a short name so launch({wadId: name})
-     * resolves it without the storage registry.
-     *
-     * @param {string} name - key for launch({wadId})
-     * @param {string} url - http(s) link to the .wad (e.g. '/wads/my.wad')
-     * @param {string|null} profileCode - 'doom'|'doom2'|'freedoom'|'heretic'|'tnt'|'plutonia'|null to sniff
+     * resolves it without the storage registry. Accepts both call styles:
+     *   doomApi.addWad('dum', 'http(s) link or /local/path.wad', 'doom');
+     *   doomApi.addWad({name: 'dum', url: '…', profileCode: 'doom'}).
+     * Plain github.com links are rewritten to a CORS-friendly mirror when the
+     * path matches a repository file; release-download links stay as they are.
      */
-    addWad(name, url, profileCode = null) {
-        DoomJsApi.BUILT_IN_WADS[String(name).toLowerCase()] = {
-            url: url, name: DoomJsApi._fileNameOf(url), profile: profileCode
+    addWad(nameOrOptions, url = null, profileCode = null) {
+        const opts = ((typeof nameOrOptions === 'object') && (nameOrOptions !== null)) ? nameOrOptions : {
+            name: nameOrOptions, url: url, profileCode: profileCode
+        };
+        const key = String(opts.name ?? opts.id ?? '').toLowerCase();
+        if (key.length === 0) {
+            throw new Error('doomApi.addWad: missing name');
+        }
+        const raw = String(opts.url ?? opts.path ?? '');
+        if (raw.length === 0) {
+            throw new Error('doomApi.addWad: missing url for "' + key + '"');
+        }
+
+        DoomJsApi.BUILT_IN_WADS[key] = {
+            urls: [raw], name: DoomJsApi._fileNameOf(raw), profile: (opts.profileCode ?? opts.profile ?? null)
         };
 
         return this;
     }
 
-    /**
-     * @param {string} url - http(s) link to a .wad
-     * @returns {Promise<WadFile>}
-     */
-    async _fetchWadFile(url) {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error('doomApi.launch: HTTP ' + response.status + ' on ' + url);
+    /** All download candidates of a table entry: explicit URLs plus the CDN mirrors of each repo reference. */
+    static _candidateUrls(entry) {
+        const out = [];
+        for (const u of (entry.urls ?? [])) {
+            if ((typeof u === 'string') && (u.startsWith('/') || /^https?:/.test(u))) {
+                out.push(u);
+                continue;
+            }
+            for (const build of DoomJsApi.CDN_HOSTS) {
+                out.push(build(u));
+            }
+        }
+        if ((typeof entry.local === 'string') && !out.includes(entry.local)) {
+            out.unshift(entry.local);
         }
 
-        return new (window.WadFile)(await response.arrayBuffer()).parse();
+        return out;
+    }
+
+    /** Fetch every candidate in order until one parses as a WAD. */
+    static async _fetchFirstAvailable(urls) {
+        let lastError = null;
+        for (const url of urls) {
+            try {
+                return await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
+            } catch (error) {
+                lastError = error;
+                console.warn('doomApi: ' + url + ' failed:', error.message ?? error);
+            }
+        }
+        throw new Error('doomApi.launch: could not download the WAD from any mirror (' + urls.join(', ') + ')', {cause: lastError});
+    }
+
+    static async _fetchBuffer(url) {
+        // swBypass keeps the Service Worker from caching a whole IWAD.
+        const bypassed = ((window.WadRegistry !== undefined) && (window.WadRegistry.bypassUrl !== undefined))
+            ? window.WadRegistry.bypassUrl(url) : url;
+        const response = await fetch(bypassed);
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+        }
+
+        return await response.arrayBuffer();
+    }
+
+    /**
+     * Open the native file dialog and return the picked File (works on
+     * localhost/https; on plain LAN http use <input type=file> instead).
+     * @returns {Promise<File|null>} null when the user cancelled
+     */
+    async pickWadFile() {
+        if ((window.showOpenFilePicker !== undefined) && (window.showOpenFilePicker !== null)) {
+            try {
+                const [handle] = await window.showOpenFilePicker({
+                    types: [{description: 'WAD files', accept: {'application/octet-stream': ['.wad', '.iwad', '.pk3']}}]
+                });
+
+                return await handle.getFile();
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return null;
+                }
+                throw error;
+            }
+        }
+
+        return await new Promise((resolve) => {
+            const input = document.createElement('input');
+            input.type  = 'file';
+            input.accept = '.wad,.iwad,.pk3';
+            input.onchange = () => resolve(input.files[0] ?? null);
+            input.click();
+        });
+    }
+
+    /** One step for local files: file dialog, then launch with the picked .wad. */
+    async pickAndLaunch(options = {}) {
+        const file = await this.pickWadFile();
+        if (file === null) {
+            throw new Error('doomApi.pickAndLaunch: no file picked');
+        }
+
+        return await this.launch({...options, file: file});
     }
 
     static _profileCodeOption(options) {
@@ -469,27 +986,6 @@ class DoomJsApi {
         } catch (error) {
             return String(url);
         }
-    }
-
-    /**
-     * Read a file:// URL through the File System Access API (showOpenFilePicker
-     * only works over https/localhost). Throws a guiding error otherwise.
-     *
-     * @param {string} fileUrl
-     * @returns {Promise<ArrayBuffer>}
-     */
-    static async _readFileUrl(fileUrl) {
-        if ((window.showOpenFilePicker !== undefined) && (window.showOpenFilePicker !== null)) {
-            const ext = (fileUrl.toLowerCase().endsWith('.iwad') ? 'iwad' : 'wad');
-            const [handle] = await window.showOpenFilePicker({
-                types: [{description: 'WAD', accept: {'application/octet-stream': ['.' + ext, '.wad', '.pk3']}}]
-            });
-            const file = await handle.getFile();
-
-            return await file.arrayBuffer();
-        }
-
-        throw new Error('doomApi.launch: cannot open "' + fileUrl + '" — browsers forbid reading file:// from an http page. Serve the .wad over http and pass {url: "/path/game.wad"}, or hand over {arrayBuffer}.');
     }
 
     /**
@@ -567,3 +1063,8 @@ if ((window._earlyMenuGame !== undefined) && (window._earlyMenuGame !== null)) {
 
 // The app is up: main.js's ready callback ran before this last script started.
 doomApi._booted = true;
+
+// Convenience aliases so every spelling works from the console:
+// doomApi.launch({wad: 'doom'}), {name: ...}, {url: ...}, {path: ...} all resolve.
+DoomJsApi.prototype.addWad = DoomJsApi.prototype.addWad;
+window.doomApiAddWad = (name, url, profileCode) => doomApi.addWad(name, url, profileCode);
