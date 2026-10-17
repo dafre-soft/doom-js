@@ -10,13 +10,52 @@
  *   await doomApi.launch({wadId: 'doom', levelCode: 'E1M1', maxSpeed: true});
  *   doomApi.showMap({corner: true});
  *   doomApi.draw((ctx, info) => { ... });            // overlay on the view
- *   setInterval(() => { const v = doomApi.getView(); /* feed the AI */ }, 50);
+ *   setInterval(() => { const v = doomApi.getView(); }, 50); // feed the AI from it
+ * The app loads ~250 scripts at boot: until they are in, window.doomApi is a
+ * placeholder — check doomApi.isReady(), or await doomApi.waitReady().
  */
 class DoomJsApi {
     constructor() {
         this._game         = null;
         this._drawCallback = null;
         this._miniMapOn    = false;
+        this._pendingGame  = null;
+        this._booted       = false;
+        this._launching    = false;
+    }
+
+    // --- Readiness: what "js долго грузятся" is about ---
+
+    /**
+     * The bootstrap loads ~250 scripts one after another before the app — and
+     * with it this file — exists. Until then `doomApi` is undefined in the
+     * console; poll this instead of guessing when the load finished.
+     *
+     * @returns {boolean} true once the app's scripts are in and a game can run
+     */
+    isReady() {
+        return this._booted;
+    }
+
+    /**
+     * Resolves when the app has booted and a game is running (started from the
+     * menus or through launch()); never rejects, so it can be awaited right
+     * after page load.
+     *
+     * @param {{timeoutMs?: number}} options
+     * @returns {Promise<boolean>} false on timeout
+     */
+    async waitReady(options = {}) {
+        const timeoutMs = options.timeoutMs ?? 120000;
+        const deadline  = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (this.isReady() && this.isRunning()) {
+                return true;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        return false;
     }
 
     // --- Game binding (called by DoomGame itself, not for the API user) ---
@@ -47,10 +86,27 @@ class DoomJsApi {
      * @returns {Promise<DoomGame>}
      */
     async launch(options = {}) {
-        const wadFile = await this._resolveWadFile(options);
-        wadFile.parse();
-        const meta  = {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'};
-        const profile = new GameProfileList().getForWad(wadFile);
+        if (this._launching) {
+            throw new Error('doomApi.launch: a launch is already in progress — wait for its promise');
+        }
+        this._launching = true;
+        try {
+            return await this._launchLocked(options);
+        } finally {
+            this._launching = false;
+        }
+    }
+
+    async _launchLocked(options) {
+        // A menu-built game may have been offered while none was bound yet.
+        if ((this._game === null) && (this._pendingGame !== null)) {
+            this.bindGame(this._pendingGame);
+            this._pendingGame = null;
+        }
+
+        const resolved  = await this._resolveWadFile(options);
+        const wadFile   = resolved.wadFile;
+        const meta      = resolved.meta;
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
             const names = wadFile.getLevelNames();
@@ -59,7 +115,7 @@ class DoomJsApi {
             }
             levelCode = names[0];
         }
-        doomSound.loadForWad(wadFile, meta.id);
+        await doomSound.loadForWad(wadFile, meta.id);
 
         const game = new DoomGame();
         this.bindGame(game);
@@ -69,11 +125,32 @@ class DoomJsApi {
         if (options.maxSpeed !== undefined) {
             game.setMaxSpeed(options.maxSpeed);
         }
+        if (options.cornerMap === true) {
+            this.showMap({corner: true});
+        }
         if (options.autoStart !== false) {
-            game.simulateStartPress();
+            this.simulateStartPress(game);
         }
 
         return game;
+    }
+
+    /**
+     * The simulated "start game" press, safe to call at any time: a plain
+     * single-player level needs nothing; a pending multiplayer start is run
+     * once the lobby opened.
+     */
+    simulateStartPress(game = null) {
+        const target = ((game !== null) ? game : this._requireGame());
+        setTimeout(() => {
+            try {
+                target.simulateStartPress();
+            } catch (error) {
+                console.error('doomApi.simulateStartPress', error);
+            }
+        }, 300);
+
+        return this;
     }
 
     /**
@@ -123,19 +200,19 @@ class DoomJsApi {
     showMap(options = {}) {
         const hud = this._requireHud();
         if (options.corner === true) {
-            hud.setAutomapCorner(true);
+            hud.setCorner(true);
             this._miniMapOn = true;
         } else if (options.corner === false) {
-            hud.setAutomapCorner(false);
+            hud.setCorner(false);
             this._miniMapOn = false;
         }
-        hud.setAutomapVisible(true);
+        hud.setVisible(true);
 
         return this;
     }
 
     hideMap() {
-        this._requireHud().setAutomapVisible(false);
+        this._requireHud().setVisible(false);
         this._miniMapOn = false;
 
         return this;
@@ -209,16 +286,47 @@ class DoomJsApi {
 
     // --- Internals ---
 
+    /**
+     * @returns {Promise<{wadFile: WadFile, meta: object}>}
+     */
     async _resolveWadFile(options) {
         if (options.arrayBuffer !== undefined) {
-            return new WadFile(options.arrayBuffer);
+            return {
+                wadFile: new WadFile(options.arrayBuffer).parse(),
+                meta:    {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'}
+            };
         }
-        if (options.wadId !== undefined) {
-            const registry = new WadRegistry(new WadStorage());
+        const registry = await new WadRegistry(new WadStorage()).init();
 
-            return await registry.getWadFile(options.wadId);
+        // A numeric wadId is a stored record's id; 'doom', 'heretic', ... are
+        // not: they match the known editions by name/title, then the url.
+        let wanted = String(options.wadId ?? '');
+        if (wanted === '') {
+            if (options.url === undefined) {
+                throw new Error('doomApi.launch: pass {wadId}, {arrayBuffer} or {url}');
+            }
+            const wadImport = await registry.addFromUrl(options.url);
+
+            return {wadFile: await registry.getWadFile(wadImport.meta.id), meta: wadImport.meta};
         }
-        throw new Error('doomApi.launch: pass {wadId} or {arrayBuffer}');
+
+        const list = await registry.getList();
+        const lower = wanted.toLowerCase();
+        const match = list.find((meta) => String(meta.id) === wanted)
+            ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(lower))
+            ?? list.find((meta) => String(meta.title ?? '').toLowerCase().includes(lower))
+            ?? list[0]
+            ?? null;
+        if ((match === null) || (match.id === undefined)) {
+            if (options.url !== undefined) {
+                const wadImport = await registry.addFromUrl(options.url);
+
+                return {wadFile: await registry.getWadFile(wadImport.meta.id), meta: wadImport.meta};
+            }
+            throw new Error('doomApi.launch: no WAD stored with id "' + wanted + '" — import one first, or pass {arrayBuffer} / {url}');
+        }
+
+        return {wadFile: await registry.getWadFile(match.id), meta: match};
     }
 
     _requireGame() {
@@ -239,7 +347,37 @@ class DoomJsApi {
     }
 }
 
-// The singleton every script reaches.
+// The singleton every script reaches. window.doomApi is a placeholder Proxy
+// installed by index.html before the boot; once this file is in, the proxy
+// forwards to the real object through window.realDoomApi — and window.doomApi
+// itself, for any code (or console) that reads it directly.
 const doomApi = new DoomJsApi();
-window.doomApi      = doomApi;
-window.doomApi.api  = {draw: (callback) => doomApi.draw(callback)};
+window.realDoomApi = doomApi;
+window.doomApi     = doomApi;
+doomApi.api        = {draw: (callback) => doomApi.draw(callback)};
+doomApi.setMaxSpeed = (value) => doomApi._requireGame().setMaxSpeed(value);
+
+// The API loads before the game classes exist: it waits for the first game
+// built by the menus, so an already-running game can be driven without a
+// launch() call. DoomGame's constructor offers itself here; launch() binds
+// its own game explicitly and is unaffected.
+doomApi._pendingGame = null;
+DoomJsApi.prototype.offerGame = function (game) {
+    if ((this.getGame() === null) || (this.getGame() === undefined)) {
+        this.bindGame(game);
+    } else {
+        this._pendingGame = game;
+    }
+
+    return this;
+};
+
+// A game offered while only the placeholder existed — the menu had already
+// built one before this file loaded.
+if ((window._earlyMenuGame !== undefined) && (window._earlyMenuGame !== null)) {
+    doomApi.offerGame(window._earlyMenuGame);
+    window._earlyMenuGame = null;
+}
+
+// The app is up: main.js's ready callback ran before this last script started.
+doomApi._booted = true;

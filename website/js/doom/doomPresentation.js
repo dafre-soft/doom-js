@@ -36,6 +36,9 @@ class DoomPresentation {
         this._noticeEl           = null;
         this._depthShadingOn     = null;   // last states pushed to the engine (null = never)
         this._texSmoothingOn     = null;
+        this._drawOverlay        = null;   // JS API: 2D callback over each rendered frame
+        this._overlayCanvas      = null;   // transparent canvas kept above the game canvas
+        this._overlayCtx         = null;
         this._fov                = WadConstants.PLAYER_FOV;
         this._fovUntickedMs      = 0;
         this._hudWasDown         = false;
@@ -50,6 +53,36 @@ class DoomPresentation {
 
     getEngine() {
         return this._engine;
+    }
+
+    // The full FOV in degrees (the engine keeps the half-angle).
+    getFov() {
+        return this._fov;
+    }
+
+    /**
+     * JS API: register an overlay drawn over what the player sees, every
+     * frame, on a transparent 2D canvas laid above the game canvas. Pass null
+     * to remove it. Kept across a renderer swap and a rebuild of the screen.
+     *
+     * @param {function|null} callback - (ctx: CanvasRenderingContext2D, info: object)
+     */
+    setDrawOverlay(callback) {
+        this._drawOverlay = ((typeof callback === 'function') ? callback : null);
+        if (this._drawOverlay === null) {
+            this._removeOverlayCanvas();
+        }
+
+        return this;
+    }
+
+    // The automap HUD layer, or null before a level is shown.
+    getAutomapHud() {
+        if (this._hud === null) {
+            return null;
+        }
+
+        return this._hud.getAutomapHud();
     }
 
     /**
@@ -130,10 +163,71 @@ class DoomPresentation {
     }
 
     teardown() {
+        this._removeOverlayCanvas();
         if (this._screen !== null) {
             this._screen.destroyContainer();
             this._screen = null;
         }
+    }
+
+    // A transparent 2D canvas laid over the game canvas, sized like it in
+    // pixels and stretched to the same box on screen; the API draws on it.
+    _ensureOverlayCanvas() {
+        if ((this._overlayCanvas !== null) && this._overlayCanvas.isConnected) {
+            return this._overlayCanvas;
+        }
+        const gameCanvas = this._engine.scrCanvas;
+        if ((gameCanvas === null) || (gameCanvas === undefined)) {
+            return null;
+        }
+        const overlay = document.createElement('canvas');
+        overlay.style.position  = 'absolute';
+        overlay.style.left      = gameCanvas.style.left;
+        overlay.style.top       = gameCanvas.style.top;
+        overlay.style.width     = gameCanvas.style.width;
+        overlay.style.height    = gameCanvas.style.height;
+        overlay.style.zIndex    = '1';
+        overlay.style.pointerEvents = 'none';
+        this._screen.getDisplay().appendChild(overlay);
+        this._overlayCanvas = overlay;
+        this._overlayCtx    = overlay.getContext('2d');
+
+        return overlay;
+    }
+
+    _removeOverlayCanvas() {
+        if (this._overlayCanvas !== null) {
+            this._overlayCanvas.remove();
+        }
+        this._overlayCanvas = null;
+        this._overlayCtx    = null;
+    }
+
+    // The API's overlay: cleared, resized with the game canvas, then drawn.
+    _drawOverlayLayer() {
+        const overlay = this._ensureOverlayCanvas();
+        if ((overlay === null) || (this._overlayCtx === null)) {
+            return;
+        }
+        const gameCanvas = this._engine.scrCanvas;
+        if (overlay.width !== gameCanvas.width) {
+            overlay.width  = gameCanvas.width;
+            overlay.height = gameCanvas.height;
+        }
+        overlay.style.left   = gameCanvas.style.left;
+        overlay.style.top    = gameCanvas.style.top;
+        overlay.style.width  = gameCanvas.style.width;
+        overlay.style.height = gameCanvas.style.height;
+
+        const ctx = this._overlayCtx;
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        this._drawOverlay(ctx, {
+            width:  overlay.width,
+            height: overlay.height,
+            fov:    this._fov,
+            engine: this._engine
+        });
     }
 
     /**
@@ -188,6 +282,9 @@ class DoomPresentation {
 
         this._engine.initFromWorld(this._world);
         this._engine.setOverlayCallback((renderer, engine) => this._drawWeaponOverlay(renderer, engine));
+        // The overlay canvas went with the old container: rebuilt on demand.
+        this._overlayCanvas = null;
+        this._overlayCtx    = null;
     }
 
     /**
@@ -362,6 +459,9 @@ class DoomPresentation {
         this._projectileRenderer.draw();
         this._engine.displayWorld(this._world, this._player.getUser());
         this._screen.update();
+        if (this._drawOverlay !== null) {
+            this._drawOverlayLayer();
+        }
     }
 
     // Read every frame so a change from the pause options applies live.

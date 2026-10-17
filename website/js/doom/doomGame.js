@@ -47,12 +47,25 @@ class DoomGame {
         this._deathClockMs    = 0;
         this._levelExit       = null;   // {display, modal, outcome, nextLevel, finaleText, buttonCode} of the tally shown
         this._animateCallback = this._animate.bind(this);
+        // JS API hooks (window.doomApi): a speed multiplier over every delta,
+        // and the overlay drawn over what the player sees. Inert when unset.
+        this._speedMultiplier = 1;
+        this._drawOverlay     = null;
 
         this._presentation.setPadControls(this._role.padControls());
         this._turnEvents.addListener((event) => this._presentation.playTurnEvent(event));
         // After the role and the presentation: both sessions reach them.
         this._hosted   = new DoomHostedSession(this);
         this._followed = ((subSession !== null) ? new DoomFollowedSession(this, subSession) : null);
+
+        // Offered to the JS API singleton as soon as a game exists (window.doomApi).
+        // window.doomApi is there from the first millisecond — a placeholder
+        // until the real API file has loaded — so no typeof guard is needed.
+        if ((typeof doomApi !== 'undefined') && (doomApi !== null)) {
+            doomApi.offerGame(this);
+        } else if ((typeof window !== 'undefined') && (window.doomApi !== undefined)) {
+            window.doomApi.offerGame(this);
+        }
     }
 
     // --- Surface the sessions and the menus reach ---
@@ -101,6 +114,186 @@ class DoomGame {
 
     getBuiltLevel() {
         return this._builtLevel;
+    }
+
+    // --- JS API surface (window.doomApi reaches the game through these) ---
+
+    /**
+     * Run the whole frame faster: true for the maximum, a number for that
+     * multiplier, false to return to normal speed. The delta of every frame is
+     * scaled, so the simulation, the animations and the sound all advance in
+     * one step.
+     *
+     * @param {boolean|number} value
+     */
+    setMaxSpeed(value = true) {
+        let factor = 1;
+        if (value === true) {
+            factor = DoomGame.MAX_SPEED_FACTOR;
+        } else if ((typeof value === 'number') && (value > 0)) {
+            factor = Math.min(value, DoomGame.MAX_SPEED_FACTOR);
+        }
+        this._speedMultiplier = factor;
+
+        return this;
+    }
+
+    getMaxSpeedFactor() {
+        return this._speedMultiplier;
+    }
+
+    isRunning() {
+        return this._running;
+    }
+
+    getLevelCode() {
+        return this._levelCode;
+    }
+
+    /**
+     * Register an overlay drawn over what the player sees, every frame:
+     *   callback(ctx: CanvasRenderingContext2D, info: object)
+     * with ctx the 2D context of the game canvas in screen pixels. Pass null
+     * to remove it.
+     *
+     * @param {function|null} callback
+     */
+    setDrawOverlay(callback) {
+        this._drawOverlay = ((typeof callback === 'function') ? callback : null);
+        // Kept across a renderer swap (the presentation rebuilds its engine).
+        this._presentation.setDrawOverlay(this._drawOverlay);
+
+        return this;
+    }
+
+    /**
+     * The automap HUD layer, or null when the level carries no map.
+     * @returns {HudAutomap|null}
+     */
+    getAutomapHud() {
+        return this._presentation.getAutomapHud();
+    }
+
+    isAutomapVisible() {
+        const hud = this.getAutomapHud();
+
+        return ((hud !== null) && hud.isVisible());
+    }
+
+    /**
+     * Everything an outside agent (an AI) needs about the current frame: the
+     * player pose and vitals, the bodies around, and where each projects on
+     * the screen — the canvas size the overlay draws in included.
+     *
+     * @returns {object|null} null before a level is shown
+     */
+    getPlayerView() {
+        if (!this._running) {
+            return null;
+        }
+        const user = this._localPlayer().getUser();
+        if ((user === null) || (user === undefined)) {
+            return null;
+        }
+        const engine = this._presentation.getEngine();
+        const canvas = engine.scrCanvas;
+        const view   = {
+            running:   this._running,
+            paused:    this._paused,
+            levelCode: this._levelCode,
+            levelName: this._levelName,
+            skill:     this._skill,
+            wadId:     this._wadId(),
+            speed:     this._speedMultiplier,
+            width:     ((canvas !== null) ? canvas.width : 0),
+            height:    ((canvas !== null) ? canvas.height : 0),
+            fov:       this._presentation.getFov(),
+            player: {
+                x:        user.x,
+                y:        user.y,
+                z:        user.z,
+                yaw:      user.yaw,
+                pitch:    user.pitch,
+                health:   user.getEnergy(),
+                armor:    user.getArmor(),
+                dead:     user.isDead(),
+                velocity: user.getRealVelocityXZ(),
+                weapon:   this._describeWeapon(user),
+                ammo:     this._describeAmmo(user)
+            },
+            things: []
+        };
+        if (this._builtLevel !== null) {
+            for (const body of this._builtLevel.getBodyViews()) {
+                const inst = body.getInstance();
+                const pos  = ((inst !== null) ? inst.getPosition() : null);
+                if (pos === null) {
+                    continue;
+                }
+                view.things.push({
+                    kind:    body.getKind(),
+                    playerId: body.getPlayerId(),
+                    netId:   body.getNetId(),
+                    x:       pos[0],
+                    y:       pos[1],
+                    z:       pos[2],
+                    facing:  body.getFacing(),
+                    screen:  this._projectToScreen(engine, pos)
+                });
+            }
+        }
+
+        return view;
+    }
+
+    _describeWeapon(user) {
+        const def = user.getActiveWeapon();
+
+        return ((def !== null) ? def.getName() : null);
+    }
+
+    _describeAmmo(user) {
+        const state = user.exportState();
+
+        return {current: state.ammo, max: state.ammoMax};
+    }
+
+    // World position → screen pixels of the game canvas (null behind the eye).
+    _projectToScreen(engine, pos) {
+        const dx = pos[0] - engine.user.x;
+        const dy = pos[1] - engine.user.y;
+        const dz = pos[2] - engine.user.z;
+        const cosYaw = Math.cos(engine.user.yaw * Math.PI / 180);
+        const sinYaw = Math.sin(engine.user.yaw * Math.PI / 180);
+        const depth = dx * cosYaw + dz * sinYaw;
+        if (depth <= 0.1) {
+            return null;
+        }
+        const side = dz * cosYaw - dx * sinYaw;
+        const tanV = Math.tan((this._presentation.getFov() / 2) * Math.PI / 180);
+        const canvas = engine.scrCanvas;
+        if ((canvas === undefined) || (canvas === null)) {
+            return null;
+        }
+        return {
+            x: (0.5 - 0.5 * (side / depth) / tanV) * canvas.width,
+            y: (0.5 + (dy / depth) / (2 * tanV)) * canvas.height,
+            depth: depth
+        };
+    }
+
+    /**
+     * The simulated "start game" press: a multiplayer start waits on the lobby
+     * until Start is clicked — this runs it at once. A plain single-player
+     * level needs nothing: the call is inert.
+     */
+    simulateStartPress() {
+        if (this._hosted.hasStartPending()) {
+            this._hosted.showStartLobby();
+            this._hosted.pressStartFromLobby();
+        }
+
+        return this;
     }
 
     getSkill() {
@@ -314,7 +507,9 @@ class DoomGame {
 
         const engine = this._presentation.getEngine();
         engine.calculateDeltaTime(timestamp);
-        const dt = engine.getDeltaTime();
+        // The API's speed multiplier: the whole frame (simulating, animation
+        // and sound alike) advances on the scaled delta.
+        const dt = engine.getDeltaTime() * this._speedMultiplier;
         // Collected every frame; the role samples the command when its turn needs it.
         this._commandSampler.collect(dt);
 
@@ -853,6 +1048,9 @@ class DoomGame {
 }
 
 DoomGame.LOCAL_PLAYER_ID = DoomPlayer.MAIN_ID;
+// The ceiling of the JS API's speed multiplier: how much every frame's delta
+// is scaled when maxSpeed is asked for.
+DoomGame.MAX_SPEED_FACTOR = 10;
 // Every multiplayer session renders with it, whatever the display setting.
 DoomGame.SESSION_RENDERER = 'webgl';
 // The tally's score rows: `found` keys the level's and each player's counts, `total` the level's total.
