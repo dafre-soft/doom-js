@@ -174,6 +174,22 @@ class DoomGame {
         return this._presentation.getAutomapHud();
     }
 
+    // --- JS API surface (window.doomApi) ---
+
+    /** The input devices of the running game, null before _init(). */
+    getInputs() {
+        return this._inputs;
+    }
+
+    /** The per-frame command sampler, null before _init(). */
+    getCommandSampler() {
+        return this._commandSampler;
+    }
+
+    isPaused() {
+        return this._paused;
+    }
+
     isAutomapVisible() {
         const hud = this.getAutomapHud();
 
