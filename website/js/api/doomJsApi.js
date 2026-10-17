@@ -129,7 +129,7 @@ class DoomJsApi {
         if (options.raw !== true) {
             const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
             const ListCtor   = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
-        const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
+            const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
             profile          = ((list !== null) ? list.getByCode(wantedCode) : null);
             if ((profile === null) || (wantedCode === null)) {
                 // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
@@ -323,6 +323,409 @@ class DoomJsApi {
         return this.draw(callback);
     }
 
+    // --- AI input: drive the player like a human (for bots / neural agents) ---
+
+    /**
+     * Hold or release a control, the way a key does; it keeps acting while held.
+     * The API owns virtual actions on the keyboard device ('api_forward', ...)
+     * that add to whatever a human presses — both work at once.
+     *
+     * @param {'forward'|'back'|'left'|'right'|'jump'|'crouch'|'run'|'use'|'attack'} key
+     * @param {boolean} pressed
+     */
+    setInput(key, pressed = true) {
+        const name = String(key).toLowerCase();
+        if (!DoomJsApi.INPUT_KEYS.includes(name)) {
+            throw new Error('doomApi.setInput: unknown key "' + name + '" — one of: ' + DoomJsApi.INPUT_KEYS.join(', '));
+        }
+        this._inputs[name] = (pressed === true);
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /**
+     * Set the movement axes directly, -1..+1 (analog stick semantics):
+     * move(x: strafe right, y: forward), plus optional look deltas in degrees.
+     * Overrides any held keys until the next setInput/stopMovement call.
+     */
+    setMove(moveX = 0, moveY = 0, lookYaw = 0, lookPitch = 0) {
+        this._moveX   = Math.max(-1, Math.min(1, Number(moveX)));
+        this._moveY   = Math.max(-1, Math.min(1, Number(moveY)));
+        this._lookYaw += Number(lookYaw);
+        this._lookPitch += Number(lookPitch);
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /** Zero the analog axes and release every held key. */
+    stopMovement() {
+        this._moveX = 0;
+        this._moveY = 0;
+        for (const key of DoomJsApi.INPUT_KEYS) {
+            this._inputs[key] = false;
+        }
+        this._applyVirtualInputs();
+
+        return this;
+    }
+
+    /**
+     * Wire the API's virtual actions into the game's input devices. Idempotent;
+     * runs after launch and whenever the inputs are rebuilt.
+     */
+    _applyVirtualInputs() {
+        const game = this._game;
+        if ((game === null) || (typeof game.getInputs !== 'function')) {
+            return;
+        }
+        const inputs = game.getInputs();
+        if ((inputs === null) || (inputs === undefined)) {
+            return;
+        }
+        if (!this._virtualBound) {
+            this._virtualBound = true;
+            const api = this;
+            const sampler = ((typeof game.getCommandSampler === 'function') ? game.getCommandSampler() : null);
+            // Virtual buttons ride the sampler: a button counts as pressed when
+            // either the device or the API holds it.
+            if ((sampler !== null) && (typeof sampler.addButton === 'function')) {
+                sampler.addButton('fire', () => api._inputs.attack);
+                sampler.addButton(UserCommand.JUMP,    () => api._inputs.jump);
+                sampler.addButton(UserCommand.CROUCH,  () => api._inputs.crouch);
+                sampler.addButton(UserCommand.RUN,     () => api._inputs.run);
+                sampler.addButton(UserCommand.ACTION,  () => api._inputs.use);
+            }
+            // The keyboard gains 'api_*' actions; Inputs reads them beside the real keys.
+            const keyboard = inputs._keyboard;
+            if ((keyboard !== undefined) && (keyboard !== null)) {
+                const defaults = {...AppInputKeyboard_privateDefaults(keyboard)};
+                for (const action of ['api_forward', 'api_backward', 'api_strafeLeft', 'api_strafeRight']) {
+                    if (defaults[action] === undefined) {
+                        defaults[action] = '';
+                    }
+                }
+                keyboard.setActionDefaults(defaults);
+            }
+        }
+        // Axes: patch the read once per game — the API values add to the device's.
+        if ((inputs._apiPatched !== true) && (typeof inputs.readJoy1X === 'function')) {
+            inputs._apiPatched = true;
+            const baseX = inputs.readJoy1X.bind(inputs);
+            const baseY = inputs.readJoy1Y.bind(inputs);
+            const api = this;
+            inputs.readJoy1X = function () {
+                const k = ((this._keyboard !== undefined) ? this._keyboard : null);
+                let extra = 0;
+                if (k !== null) {
+                    extra = (k.readAction('api_strafeRight') ? 1 : 0) - (k.readAction('api_strafeLeft') ? 1 : 0);
+                }
+                return clampAxis(baseX() + (extra !== 0 ? extra : api._moveX));
+            };
+            inputs.readJoy1Y = function () {
+                const k = ((this._keyboard !== undefined) ? this._keyboard : null);
+                let extra = 0;
+                if (k !== null) {
+                    extra = (k.readAction('api_forward') ? 1 : 0) - (k.readAction('api_backward') ? 1 : 0);
+                }
+                return clampAxis(baseY() + (extra !== 0 ? extra : api._moveY));
+            };
+        }
+        // Push the current key state into the virtual actions (a Set-backed
+        // table would be cleaner, but the keyboard maps actions to key codes;
+        // instead keep a live reader list on the keyboard object itself).
+        if ((inputs._keyboard !== undefined) && (inputs._keyboard !== null)) {
+            inputs._keyboard._apiActions = this._inputs;
+            const k = inputs._keyboard;
+            if (k._apiReadPatched !== true) {
+                k._apiReadPatched = true;
+                const baseRead = k.readAction.bind(k);
+                k.readAction = function (action) {
+                    if ((this._apiActions !== undefined) && DoomJsApi.VIRTUAL_ACTION_KEYS[action] !== undefined) {
+                        return this._apiActions[DoomJsApi.VIRTUAL_ACTION_KEYS[action]] === true;
+                    }
+
+                    return baseRead(action);
+                };
+            }
+        }
+
+        return this;
+    }
+
+    /**
+     * One-shot press: down for holdMs, then released. Async so an agent can
+     * await it: `await doomApi.press('attack', 120)`.
+     */
+    async press(key, holdMs = 60) {
+        this.setInput(key, true);
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, holdMs)));
+        this.setInput(key, false);
+
+        return this;
+    }
+
+    /** Release every held control. */
+    releaseAll() {
+        for (const key of DoomJsApi.INPUT_KEYS) {
+            this.setInput(key, false);
+        }
+
+        return this;
+    }
+
+    /** The current held-key map {forward: bool, ...}. */
+    getInputs() {
+        return {...this._inputs};
+    }
+
+    /**
+     * Turn the view by degrees (yaw += dx, pitch clamped += dy), relative.
+     */
+    look(dx = 0, dy = 0) {
+        const user = this._requireUser();
+        user.yaw   = DoomJsApi._normAngle(user.yaw + dx);
+        user.pitch = Math.max(-89, Math.min(89, user.pitch + dy));
+
+        return this;
+    }
+
+    /** Point the view at absolute yaw/pitch degrees (yaw 0..360, pitch -89..89). */
+    setOrientation(yaw = null, pitch = null) {
+        const user = this._requireUser();
+        if (yaw !== null) {
+            user.yaw = DoomJsApi._normAngle(Number(yaw));
+        }
+        if (pitch !== null) {
+            user.pitch = Math.max(-89, Math.min(89, Number(pitch)));
+        }
+
+        return this;
+    }
+
+    /** Aim the view at a world position {x, y, z} (engine coords, metres). */
+    faceTarget(target) {
+        const user = this._requireUser();
+        const pos  = DoomJsApi._asPosition(target);
+        const dx   = pos.x - user.x;
+        const dz   = pos.z - user.z;
+        const dy   = pos.y - user.y;
+        user.yaw   = DoomJsApi._normAngle(Math.atan2(dz, dx) * 180 / Math.PI);
+        const flat = Math.sqrt(dx * dx + dz * dz);
+        user.pitch = Math.max(-89, Math.min(89, Math.atan2(dy, Math.max(flat, 1e-6)) * 180 / Math.PI));
+
+        return this;
+    }
+
+    /**
+     * Teleport the player to a spot and snap it onto the sector's floor there.
+     *
+     * @param {{x?: number, y?: number, z?: number, yaw?: number}} target — engine
+     *        coords (x/z the horizontal plane, y up); or Doom map coords via
+     *        {doomX, doomY}. Pass only x/z to keep the current height.
+     */
+    teleportTo(target) {
+        const user = this._requireUser();
+        const SCALE = (typeof WadConstants !== 'undefined') ? WadConstants.SCALE : window.WadConstants.SCALE;
+        let x = user.x, y = user.y, z = user.z;
+        if ((target.doomX !== undefined) || (target.doomY !== undefined)) {
+            x = (target.doomX !== undefined) ? (target.doomX * SCALE) : x;
+            z = (target.doomY !== undefined) ? (target.doomY * SCALE) : z;
+        } else {
+            if (target.x !== undefined) { x = Number(target.x); }
+            if (target.y !== undefined) { y = Number(target.y); }
+            if (target.z !== undefined) { z = Number(target.z); }
+        }
+        user.x = x;
+        user.z = z;
+        // Snap onto the live floor of the sector under the landing point.
+        try {
+            const heights = this._levelHeights();
+            if (heights !== null) {
+                const si = heights.sectorIndexAt(x, z);
+                if (si !== null) {
+                    y = heights.floorOf(si);
+                }
+            }
+        } catch (error) {
+            console.warn('doomApi.teleportTo: floor snap skipped', error);
+        }
+        user.y = y;
+        if (target.yaw !== undefined) {
+            user.yaw = DoomJsApi._normAngle(Number(target.yaw));
+        }
+
+        return this;
+    }
+
+    /**
+     * Warp to another level of the running WAD by its lump name ('E1M2', 'MAP05').
+     * Keeps the player's equipment and speed settings.
+     */
+    async warpToLevel(levelCode) {
+        const game = this._requireGame();
+        const wadFile = game.getWadFile();
+        const names = ((wadFile !== null) ? wadFile.getLevelNames() : []);
+        const code = String(levelCode).toUpperCase();
+        if (!names.includes(code)) {
+            throw new Error('doomApi.warpToLevel: no level "' + code + '" in this WAD — available: ' + names.join(', '));
+        }
+        const snapshot = game.captureSnapshot();
+        game.setRestoreSnapshot(snapshot);
+
+        return await game.startFromWad(wadFile, code, null, null, null, game.getProfile());
+    }
+
+    /** Restart the current level, keeping the equipment. */
+    async restartLevel() {
+        return await this.warpToLevel(this._requireGame().getLevelCode());
+    }
+
+    /** Switch skill (1..5) right away. */
+    setSkill(skill) {
+        const value = Math.max(1, Math.min(5, Number(skill)));
+        this._skill = value;
+        const role = this._requireGame().getRole();
+        if ((role !== null) && (typeof role.useProfile === 'function')) {
+            role.useProfile(this._requireGame().getProfile(), null, value);
+        }
+
+        return this;
+    }
+
+    /** Give the player a weapon by code (e.g. 'shotgun'); returns whether it exists. */
+    giveWeapon(code) {
+        const user = this._requireUser();
+        user.declareWeapon(code);
+        user.giveWeapon(code);
+
+        return user.hasWeapon(code);
+    }
+
+    /** Put a weapon in the hands (no-op when the player lacks it). */
+    selectWeapon(code) {
+        const user = this._requireUser();
+        user.setActiveWeapon(code);
+
+        return user.getActiveWeapon();
+    }
+
+    /** Refill health (and optionally armor) — god-mode helper for agents. */
+    heal(energy = 100, armor = null) {
+        const user = this._requireUser();
+        user.setEnergy(Math.min(Number(energy), user.getMaxEnergy()));
+        if (armor !== null) {
+            user.setArmor(Math.min(Number(armor), user.getMaxArmor()));
+        }
+
+        return this;
+    }
+
+    /** Respawn a dead player at its start position with default equipment. */
+    respawn() {
+        const user = this._requireUser();
+        if (user.isDead()) {
+            user.kill();
+        }
+        user.setVitals(user.getMaxEnergy(), false, 0, 0);
+
+        return this;
+    }
+
+    /**
+     * A compact observation for a learning agent: numbers only, one object.
+     * Same data as getView() but trimmed for a policy network's input.
+     */
+    observe() {
+        const view = this.getView();
+        if (view === null) {
+            return null;
+        }
+        const p = view.player;
+
+        return {
+            level: view.levelCode,
+            x: p.x, y: p.y, z: p.z,
+            yaw: p.yaw, pitch: p.pitch,
+            health: p.health, armor: p.armor, dead: p.dead,
+            weapon: p.weapon, ammo: p.ammo.current,
+            targets: view.things.slice(0, 64).map((t) => ({
+                kind: t.kind, x: t.x, y: t.y, z: t.z,
+                sx: ((t.screen !== null) ? t.screen.x : -1),
+                sy: ((t.screen !== null) ? t.screen.y : -1),
+                depth: ((t.screen !== null) ? t.screen.depth : -1)
+            }))
+        };
+    }
+
+    /**
+     * Subscribe to per-frame events without drawing anything: the callback gets
+     * the same info object the overlay receives. Returns an unsubscribe function.
+     */
+    onFrame(callback) {
+        if (typeof callback !== 'function') {
+            throw new Error('doomApi.onFrame: needs a function');
+        }
+        this._frameListeners.add(callback);
+        this._installFrameHook();
+
+        return () => this._frameListeners.delete(callback);
+    }
+
+    /** Wait until a condition over the view holds (or timeout): AI scripting. */
+    async waitFor(condition, options = {}) {
+        const timeoutMs = options.timeoutMs ?? 10000;
+        const fn = (typeof condition === 'function')
+            ? condition
+            : (() => this.isRunning() && (this.getLevelCode() === String(condition).toUpperCase()));
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const view = this.getView();
+            if ((view !== null) && fn(view)) {
+                return view;
+            }
+            await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 50));
+        }
+
+        return null;
+    }
+
+    /** List the levels inside the running WAD. */
+    getLevels() {
+        const wadFile = this._requireGame().getWadFile();
+
+        return ((wadFile !== null) ? wadFile.getLevelNames() : []);
+    }
+
+    /** A PNG data-URL of what the player sees right now — feed it to a vision model. */
+    screenshot(mimeType = 'image/png', quality = 0.8) {
+        const game = this._requireGame();
+        const engine = game.getPresentation().getEngine();
+        const canvas = engine.scrCanvas;
+        if ((canvas === undefined) || (canvas === null)) {
+            throw new Error('doomApi.screenshot: no game canvas yet');
+        }
+
+        return canvas.toDataURL(mimeType, quality);
+    }
+
+    /** Pause / resume the simulation. */
+    setPaused(paused = true) {
+        const game = this._requireGame();
+        if (paused === true) {
+            game.freeze();
+        } else {
+            game.unfreeze(true);
+        }
+
+        return this;
+    }
+
+    isPaused() {
+        return ((this._game !== null) && this._game.isPaused());
+    }
+
     // --- Internals ---
 
     /**
@@ -361,7 +764,8 @@ class DoomJsApi {
 
         // 2. A link to the .wad file — http(s), or file:// when the page runs
         // from the filesystem. No profiles, no IndexedDB registry: fetch and parse.
-        const url = options.url ?? options.path ?? options.file;
+        // Every spelling of the option is accepted: wadUrl / url / path / file / src.
+        const url = options.wadUrl ?? options.url ?? options.path ?? options.file ?? options.src;
         if ((url !== undefined) && (url !== null)) {
             const wanted = DoomJsApi._profileCodeOption(options);
             if (String(url).toLowerCase().startsWith('file://')) {
