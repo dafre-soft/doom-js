@@ -128,7 +128,8 @@ class DoomJsApi {
         let profile = null;
         if (options.raw !== true) {
             const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
-            const list       = ((typeof GameProfileList === 'function') ? new GameProfileList() : null);
+            const ListCtor   = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
+        const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
             profile          = ((list !== null) ? list.getByCode(wantedCode) : null);
             if ((profile === null) || (wantedCode === null)) {
                 // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
@@ -136,7 +137,8 @@ class DoomJsApi {
             }
         }
         if ((profile === null) || (profile === undefined)) {
-            profile = new DefaultGameProfile();
+            const ProfileCtor = (typeof DefaultGameProfile === 'function') ? DefaultGameProfile : window.DefaultGameProfile;
+            profile = new ProfileCtor();
         }
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
@@ -150,14 +152,15 @@ class DoomJsApi {
             doomSound.loadForWad(wadFile, meta.id);
         }
 
-        const game = new DoomGame();
+        const GameCtor = (typeof DoomGame === 'function') ? DoomGame : window.DoomGame;
+        const game = new GameCtor();
         this.bindGame(game);
         // The level's own sounds and music start with the level: a launch from
         // the console must not wait for the menu flow that normally does it.
         game.startSoundsForWad(wadFile, meta.id);
         await game.startFromWad(wadFile, levelCode, meta, null,
             ((options.skill !== undefined) && (options.skill !== null))
-                ? options.skill : DoomSimulation.DEFAULT_SKILL, profile);
+                ? options.skill : ((typeof DoomSimulation === 'object' || typeof DoomSimulation === 'function') ? DoomSimulation.DEFAULT_SKILL : window.DoomSimulation.DEFAULT_SKILL), profile);
         if (options.maxSpeed !== undefined) {
             game.setMaxSpeed(options.maxSpeed);
         }
@@ -350,7 +353,7 @@ class DoomJsApi {
         // 1. A raw ArrayBuffer handed over directly.
         if (options.arrayBuffer !== undefined) {
             return {
-                wadFile: new WadFile(options.arrayBuffer).parse(),
+                wadFile: new (window.WadFile)(options.arrayBuffer).parse(),
                 meta:    {id: ((options.wadId !== undefined) ? options.wadId : 'api'), name: 'api.wad'},
                 profileCode: DoomJsApi._profileCodeOption(options)
             };
@@ -365,7 +368,7 @@ class DoomJsApi {
                 const buffer = await DoomJsApi._readFileUrl(url);
 
                 return {
-                    wadFile: new WadFile(buffer).parse(),
+                    wadFile: new (window.WadFile)(buffer).parse(),
                     meta:    {id: wanted ?? 'file', name: DoomJsApi._fileNameOf(url)},
                     profileCode: wanted
                 };
@@ -407,7 +410,7 @@ class DoomJsApi {
         // 5. Anything else: a WAD previously imported into storage, by id or title.
         let match = null;
         try {
-            const registry = await new WadRegistry(new WadStorage()).init();
+            const registry = await new (window.WadRegistry)(new (window.WadStorage)()).init();
             const list = await registry.getList();
             match = list.find((meta) => String(meta.id) === wanted)
                 ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(wanted))
@@ -451,7 +454,7 @@ class DoomJsApi {
             throw new Error('doomApi.launch: HTTP ' + response.status + ' on ' + url);
         }
 
-        return new WadFile(await response.arrayBuffer()).parse();
+        return new (window.WadFile)(await response.arrayBuffer()).parse();
     }
 
     static _profileCodeOption(options) {

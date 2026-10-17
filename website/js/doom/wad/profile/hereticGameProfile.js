@@ -5,7 +5,7 @@
  * codes (>= 1000, unreachable by vanilla WAD data, see WadConstants) so the
  * Doom pipeline stays untouched.
  */
-class HereticGameProfile extends DefaultGameProfile {
+class HereticGameProfile extends window.DefaultGameProfile {
     getCode() {
         return 'heretic';
     }
@@ -1270,15 +1270,15 @@ class HereticGameProfile extends DefaultGameProfile {
     // variant, the two lavas, the sludge), every frame of their animations.
     terrainFlats() {
         return {
-            ...AbstractGameProfile.terrainGroup('water', [
+            ...this.terrainGroup('water', [
                 'FLTWAWA1', 'FLTWAWA2', 'FLTWAWA3',
                 'FLTFLWW1', 'FLTFLWW2', 'FLTFLWW3'
             ]),
-            ...AbstractGameProfile.terrainGroup('lava', [
+            ...this.terrainGroup('lava', [
                 'FLTLAVA1', 'FLTLAVA2', 'FLTLAVA3', 'FLTLAVA4',
                 'FLATHUH1', 'FLATHUH2', 'FLATHUH3', 'FLATHUH4'
             ]),
-            ...AbstractGameProfile.terrainGroup('sludge', [
+            ...this.terrainGroup('sludge', [
                 'FLTSLUD1', 'FLTSLUD2', 'FLTSLUD3'
             ])
         };
@@ -1492,10 +1492,10 @@ class HereticGameProfile extends DefaultGameProfile {
 
 // A_KnightAttack (knight.zs): fist in reach, else an axe thrown from 36 units
 // up — the red one, far nastier, on a 40/256 jet (always, for a ghost).
-HereticGameProfile.MULTIPLAYER_ITEM_RULES = {weaponsStay: true, keysStay: true, deathmatchWeaponClips: null};
-HereticGameProfile.ITEM_RESPAWN_RULES     = {delayTics: 1400, revealTics: 36, effect: 'itemRestore', sound: 'misc/spawn', neverTypes: [84]};
+window.HereticGameProfile.MULTIPLAYER_ITEM_RULES = {weaponsStay: true, keysStay: true, deathmatchWeaponClips: null};
+window.HereticGameProfile.ITEM_RESPAWN_RULES     = {delayTics: 1400, revealTics: 36, effect: 'itemRestore', sound: 'misc/spawn', neverTypes: [84]};
 
-HereticGameProfile.KNIGHT_ATTACK = ['A_KnightAttack', {
+window.HereticGameProfile.KNIGHT_ATTACK = ['A_KnightAttack', {
     damage:     {base: 3, dice: 8},
     kind:       'knightAxe',
     rareKind:   'redAxe',
@@ -1505,7 +1505,7 @@ HereticGameProfile.KNIGHT_ATTACK = ['A_KnightAttack', {
 
 // A_LichAttack (ironlich.zs): fist in reach, else one of three shots drawn
 // against the distance — ice ball, fire column or whirlwind.
-HereticGameProfile.LICH_ATTACK = ['A_LichAttack', {
+window.HereticGameProfile.LICH_ATTACK = ['A_LichAttack', {
     damage:      {base: 6, dice: 8},
     farDistance: 8 * 64,
     iceChance:   [50, 150],
@@ -1519,7 +1519,7 @@ HereticGameProfile.LICH_ATTACK = ['A_LichAttack', {
 
 // A_MinotaurDecide (raven/minotaur.zs): the invulnerable charge at mid range,
 // the floor-fire hammer up close, else the swing the state falls through to.
-HereticGameProfile.MINOTAUR_DECIDE = ['A_MinotaurDecide', {
+window.HereticGameProfile.MINOTAUR_DECIDE = ['A_MinotaurDecide', {
     chargeMin:     1 * 64,
     chargeMax:     8 * 64,
     chargeChance:  150,
@@ -1534,7 +1534,7 @@ HereticGameProfile.MINOTAUR_DECIDE = ['A_MinotaurDecide', {
 
 // A_Srcr1Attack (dsparil.zs): one fireball while healthy, three once past a
 // third of its life — and then it may chain a second volley.
-HereticGameProfile.SERPENT_ATTACK = ['A_Srcr1Attack', {
+window.HereticGameProfile.SERPENT_ATTACK = ['A_Srcr1Attack', {
     damage:      {base: 8, dice: 8},
     kind:        'sorcererFX1',
     height:      48,
@@ -1550,7 +1550,7 @@ HereticGameProfile.SERPENT_ATTACK = ['A_Srcr1Attack', {
 // off eighths of his health, WORST first — at full strength he stands his
 // ground, and the more he bleeds the more he runs. A spot must lie at least
 // 128 units away.
-HereticGameProfile.SORCERER2_DECIDE = ['A_Srcr2Decide', {
+window.HereticGameProfile.SORCERER2_DECIDE = ['A_Srcr2Decide', {
     chances:       [192, 120, 120, 120, 64, 64, 32, 16, 0],
     minDistance:   128,
     teleportState: 'teleport0'
@@ -1558,7 +1558,7 @@ HereticGameProfile.SORCERER2_DECIDE = ['A_Srcr2Decide', {
 
 // A_Srcr2Attack: 20 × (1..8) in reach, else the blue bolt — or, twice as often
 // under half his life, the two spawners that hatch disciples at his flanks.
-HereticGameProfile.SORCERER2_ATTACK = ['A_Srcr2Attack', {
+window.HereticGameProfile.SORCERER2_ATTACK = ['A_Srcr2Attack', {
     damage:          {base: 20, dice: 8},
     kind:            'sorcerer2FX1',
     height:          48,
@@ -1571,7 +1571,7 @@ HereticGameProfile.SORCERER2_ATTACK = ['A_Srcr2Attack', {
 
 // The maps whose mapinfo block names another episode's song instead of their
 // own MUS_ExMy lump (mapinfo/heretic.txt, extracted map by map).
-HereticGameProfile.LEVEL_MUSIC_REUSE = {
+window.HereticGameProfile.LEVEL_MUSIC_REUSE = {
     E2M5: 'MUS_E1M4',
     E3M1: 'MUS_E1M1', E3M4: 'MUS_E1M6', E3M5: 'MUS_E1M3', E3M6: 'MUS_E1M2',
     E3M7: 'MUS_E1M5', E3M8: 'MUS_E1M9', E3M9: 'MUS_E2M6',
@@ -1585,7 +1585,7 @@ HereticGameProfile.LEVEL_MUSIC_REUSE = {
 };
 
 // UZDoom sndseq.txt, Heretic Ambience block, verbatim.
-HereticGameProfile.SOUND_SEQUENCES = `
+window.HereticGameProfile.SOUND_SEQUENCES = `
 // Heretic Ambience ---------------------------
 
 :HereticAmbience
@@ -1735,7 +1735,7 @@ end
 `;
 // Player.ColorRange 225-240, then Player.Colorset 0-3 of hereticplayer.zs: first index and marker
 // of each (its last follows from the range's length).
-HereticGameProfile.PLAYER_COLORS = {
+window.HereticGameProfile.PLAYER_COLORS = {
     range: [225, 240],
     slots: [
         {from: 225, marker: 238},
@@ -1746,7 +1746,7 @@ HereticGameProfile.PLAYER_COLORS = {
 };
 // zscript hereticplayer.zs. Left out: the skull of the gibbed death (A_SkullPop)
 // and the fire death (Burn), mechanics the game lacks for the player.
-HereticGameProfile.PLAYER_BODY = {
+window.HereticGameProfile.PLAYER_BODY = {
     code: 'player', name: 'Corvus', sprite: 'PLAY',
     health: 100, radius: 16, height: 56, speed: 1, painChance: 255,
     states: {
@@ -1759,3 +1759,12 @@ HereticGameProfile.PLAYER_BODY = {
         xdeath:  [['Q', 5, 'A_PlayerScream'], ['R', 5, 'A_NoBlocking'], ['STUVWX', 5], ['Y', -1]]
     }
 };
+
+// Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
+if ((typeof window !== 'undefined') && (window.HereticGameProfile !== undefined) && (window.HereticGameProfile !== HereticGameProfile)) {
+    Object.assign(window.HereticGameProfile.prototype, HereticGameProfile.prototype);
+    Object.getOwnPropertyNames(HereticGameProfile).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.HereticGameProfile[k] = HereticGameProfile[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.HereticGameProfile = HereticGameProfile;
+}

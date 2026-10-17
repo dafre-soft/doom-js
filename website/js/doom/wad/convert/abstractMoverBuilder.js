@@ -4,7 +4,13 @@
  * instance per sector, and they all finish a mesh the same way — only the
  * geometry and the keyframes differ, which is what the subclasses provide.
  */
-class AbstractMoverBuilder {
+// Boot-shim interop: js/boot/shim-abstractMoverBuilder.js may have put a stand-in on
+// window.AbstractMoverBuilder BEFORE this file evaluated (the parallel boot lets subclasses run
+// before their base class landed). Merge the real body into that constructor so
+// every early `extends AbstractMoverBuilder` keeps working; otherwise declare it normally.
+window.__AbstractMoverBuilderDefined = true;
+const AbstractMoverBuilder__Real = class AbstractMoverBuilder {
+
     /**
      * @param {object}            level
      * @param {object}            analysis
@@ -154,4 +160,16 @@ class AbstractMoverBuilder {
     _buildOne(si) {
         throw new Error('AbstractMoverBuilder: _buildOne not implemented');
     }
+}
+
+if ((typeof window !== 'undefined') && (window.AbstractMoverBuilder !== undefined)
+    && (window.AbstractMoverBuilder !== AbstractMoverBuilder__Real)) {
+    Object.assign(window.AbstractMoverBuilder.prototype, AbstractMoverBuilder__Real.prototype);
+    Object.getOwnPropertyNames(AbstractMoverBuilder__Real)
+        .filter((k) => !['length', 'name', 'prototype'].includes(k))
+        .forEach((k) => { try { window.AbstractMoverBuilder[k] = AbstractMoverBuilder__Real[k]; } catch (e) {} });
+    Object.getOwnPropertyNames(AbstractMoverBuilder__Real.prototype)
+        .forEach((k) => { try { window.AbstractMoverBuilder.prototype[k] = AbstractMoverBuilder__Real.prototype[k]; } catch (e) {} });
+} else if ((typeof window === 'undefined') || (window.AbstractMoverBuilder === undefined)) {
+    window.AbstractMoverBuilder = AbstractMoverBuilder__Real;
 }

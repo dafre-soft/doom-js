@@ -372,7 +372,9 @@ class DoomGame {
     // explicit wadId/profile code or a direct file:// / http link).
     async startFromWad(wadFile, levelCode, wadMeta = null, spawnOverride = null, skill = null, profileOverride = null) {
         this._wadFile        = wadFile;
-        this._profile        = ((profileOverride !== null) ? profileOverride : new GameProfileList().getForWad(wadFile));
+        this._profile        = ((profileOverride !== null)
+            ? profileOverride
+            : new (window.GameProfileList)().getForWad(wadFile));
         this._itemCatalog    = new DoomItemCatalog(this._profile);
         this._thingCatalog   = this._profile.createThingCatalog();
         this._monsterCatalog = this._profile.createMonsterCatalog();

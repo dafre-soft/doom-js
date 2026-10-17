@@ -1,4 +1,4 @@
-class Object3dRendererFull extends Object3dRendererBase {
+class Object3dRendererFull extends window.Object3dRendererBase {
     constructor() {
         super();
         this._p1 = new Array(10);
@@ -383,4 +383,13 @@ class Object3dRendererFull extends Object3dRendererBase {
             }
         }
     }
+}
+
+// Publish for the boot shims / late evaluators; merge into a stand-in if one exists.
+if ((typeof window !== 'undefined') && (window.Object3dRendererFull !== undefined) && (window.Object3dRendererFull !== Object3dRendererFull)) {
+    Object.assign(window.Object3dRendererFull.prototype, Object3dRendererFull.prototype);
+    Object.getOwnPropertyNames(Object3dRendererFull).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.Object3dRendererFull[k] = Object3dRendererFull[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.Object3dRendererFull = Object3dRendererFull;
 }

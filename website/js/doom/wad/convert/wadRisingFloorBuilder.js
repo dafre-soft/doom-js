@@ -5,7 +5,7 @@
  * from origFh - |delta| to origFh, on every two-sided edge (E2M2's
  * neighbouring platforms stop at different heights).
  */
-class WadRisingFloorBuilder extends AbstractMoverBuilder {
+class WadRisingFloorBuilder extends window.AbstractMoverBuilder {
     _sectorIds() {
         return this._analysis.risingFloorIds;
     }

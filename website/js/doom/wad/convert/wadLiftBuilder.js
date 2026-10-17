@@ -2,7 +2,7 @@
  * Lift / moving floor instances builder (transposition of the lift generation
  * phase of convert_wad.py main()).
  */
-class WadLiftBuilder extends AbstractMoverBuilder {
+class WadLiftBuilder extends window.AbstractMoverBuilder {
     _sectorIds() {
         return this._analysis.liftIds;
     }

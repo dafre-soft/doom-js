@@ -1,4 +1,4 @@
-class Object3dRendererWebGL extends Object3dRendererBase {
+class Object3dRendererWebGL extends window.Object3dRendererBase {
     constructor() {
         super();
         this._program          = null;
@@ -644,3 +644,12 @@ class Object3dRendererWebGL extends Object3dRendererBase {
 // Default sky band (radians above the horizon): Doom's sky, its bottom dipping just below the walls.
 Object3dRendererWebGL.SKY_TOP    = 0.48;
 Object3dRendererWebGL.SKY_BOTTOM = -0.12;
+
+// Publish for the boot shims / late evaluators; merge into a stand-in if one exists.
+if ((typeof window !== 'undefined') && (window.Object3dRendererWebGL !== undefined) && (window.Object3dRendererWebGL !== Object3dRendererWebGL)) {
+    Object.assign(window.Object3dRendererWebGL.prototype, Object3dRendererWebGL.prototype);
+    Object.getOwnPropertyNames(Object3dRendererWebGL).filter((k) => !['length','name','prototype'].includes(k))
+        .forEach((k) => { try { window.Object3dRendererWebGL[k] = Object3dRendererWebGL[k]; } catch (e) {} });
+} else if (typeof window !== 'undefined') {
+    window.Object3dRendererWebGL = Object3dRendererWebGL;
+}
