@@ -115,6 +115,13 @@ class DoomJsApi {
             this._pendingGame = null;
         }
 
+        // If a local wad_server.py is up and the name is still unknown, give
+        // auto-discovery one last chance to register it before resolving.
+        const wantedName = String(options.wadId ?? options.wad ?? options.name ?? '').toLowerCase();
+        if ((wantedName.length > 0) && (DoomJsApi.BUILT_IN_WADS[wantedName] === undefined)) {
+            await this._autoDiscoverWads();
+        }
+
         const resolved  = await this._resolveWadFile(options);
         const wadFile   = resolved.wadFile;
         const meta      = resolved.meta;
@@ -912,6 +919,52 @@ class DoomJsApi {
     }
 
     /**
+     * Auto-register every WAD served by a local `python wad_server.py` instance
+     * (repo root). The server parses each .wad and answers GET /api/wads with
+     * {wads:[{name,file,profile,levels,…}]} plus CORS headers, so the browser
+     * can read it from any port. Call style:
+     *   await doomApi.addWadFromServer();                       // 127.0.0.1:8090
+     *   await doomApi.addWadFromServer('http://127.0.0.1:9000');
+     * After that: launch({wadId: 'DOOM', levelCode: 'E1M1'}).
+     * Returns the list of registered names (empty array if server is down).
+     */
+    async addWadFromServer(baseUrl = 'http://127.0.0.1:8090') {
+        const base = String(baseUrl).replace(/\/+$/, '');
+        let data = null;
+        try {
+            const response = await fetch(base + '/api/wads', {cache: 'no-store'});
+            if (response.ok) {
+                data = await response.json();
+            }
+        } catch (error) {
+            console.warn('doomApi.addWadFromServer: no wad_server on ' + base
+                + ' — start it with: python wad_server.py --dir <папка с WAD>');
+
+            return [];
+        }
+        const registered = [];
+        for (const entry of (data?.wads ?? [])) {
+            if (!entry.ok || !entry.file) {
+                continue;
+            }
+            const key = String(entry.name).toLowerCase();
+            DoomJsApi.BUILT_IN_WADS[key] = {
+                urls: [base + encodeURI(entry.file)],
+                name: entry.fileName,
+                profile: entry.profile ?? null,
+                levels: entry.levels ?? []
+            };
+            registered.push(entry.name);
+        }
+        console.info('doomApi.addWadFromServer: registered ' + registered.length
+            + ' WAD(s) from ' + base + ': [' + registered.join(', ') + ']'
+            + '\n  e.g. await doomApi.launch({wadId: "' + (registered[0] ?? 'doom')
+            + '", levelCode: "E1M1", maxSpeed: true});');
+
+        return registered;
+    }
+
+    /**
      * The game engine refuses to start a level whose code is not in the WAD.
      * For a console launch this is pure friction — 'E1M1' on a MAP-structured
      * WAD (or vice versa) is almost always just a naming slip. Remap it onto
@@ -1166,3 +1219,26 @@ doomApi._booted = true;
 // doomApi.launch({wad: 'doom'}), {name: ...}, {url: ...}, {path: ...} all resolve.
 DoomJsApi.prototype.addWad = DoomJsApi.prototype.addWad;
 window.doomApiAddWad = (name, url, profileCode) => doomApi.addWad(name, url, profileCode);
+
+// Auto-discovery of a local wad_server.py: if it answers, every WAD it serves
+// is registered under its file name (lower-cased) before the first launch().
+// Disable with: doomApi.autoDiscoverWads = false;  Set another port via
+// window.DOOM_WAD_SERVER = 'http://127.0.0.1:9000';
+doomApi.autoDiscoverWads = true;
+DoomJsApi.prototype._autoDiscoverWads = async function () {
+    if (!this.autoDiscoverWads) {
+        return [];
+    }
+    const bases = [window.DOOM_WAD_SERVER ?? 'http://127.0.0.1:8090'];
+
+    for (const base of bases) {
+        const names = await this.addWadFromServer(base);
+        if (names.length > 0) {
+            return names;
+        }
+    }
+
+    return [];
+};
+window.doomApiAddWadFromServer = (baseUrl) => doomApi.addWadFromServer(baseUrl);
+doomApi._autoDiscoverWads();
