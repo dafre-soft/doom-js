@@ -54,6 +54,11 @@
             // await doomApi.waitReady() / doomApi.isReady()).
             const doomApiStubs = {
                 isReady: () => false,
+                // The boot itself may still be in progress (service worker
+                // registration, manifest fetch) while the console proxy above
+                // does not exist yet — appBootstrap sets this flag as soon as
+                // loadApp() has started fetching the scripts.
+                bootStarted: () => ((window._appBootStarted === true) || window.doomApi.isReady()),
                 waitReady: async (options = {}) => {
                     const timeoutMs = ((options instanceof Object && typeof options.timeoutMs === 'number') ? options.timeoutMs : 120000);
                     const deadline = Date.now() + timeoutMs;
