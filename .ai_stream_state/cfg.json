@@ -1,0 +1,28 @@
+{
+  "siteUrl": "http://127.0.0.1:8124/index.html",
+  "headless": true,
+  "game": {
+    "wadName": "freedoom1",
+    "wadUrl": null,
+    "levelCode": "E1M1",
+    "skill": 3,
+    "maxSpeed": true
+  },
+  "agent": {
+    "stepsPerEpisode": 500,
+    "stepDelay": 0.05,
+    "temperature": 1.0,
+    "autoSave": true,
+    "popSize": 12
+  },
+  "reward": {
+    "move": 0.05,
+    "stuck": -0.03,
+    "hurt": -0.2,
+    "death": -20.0,
+    "survive": 0.05,
+    "time": -0.01,
+    "near_item": 0.02,
+    "near_enemy": 0.01
+  }
+}
