@@ -3,7 +3,7 @@
  * behaviour as the id Doom II profile with its own level names; its finale
  * texts (T1TEXT…) are not transcribed, so its chapter ends stay silent.
  */
-class TntGameProfile extends window.DoomGameProfile {
+const TntGameProfile__Real = class TntGameProfile extends window.DoomGameProfile {
     getCode() {
         return 'tnt';
     }
@@ -65,10 +65,19 @@ class TntGameProfile extends window.DoomGameProfile {
 }
 
 // Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
-if ((typeof window !== 'undefined') && (window.TntGameProfile !== undefined) && (window.TntGameProfile !== TntGameProfile)) {
-    Object.assign(window.TntGameProfile.prototype, TntGameProfile.prototype);
-    Object.getOwnPropertyNames(TntGameProfile).filter((k) => !['length','name','prototype'].includes(k))
-        .forEach((k) => { try { window.TntGameProfile[k] = TntGameProfile[k]; } catch (e) {} });
-} else if (typeof window !== 'undefined') {
-    window.TntGameProfile = TntGameProfile;
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.TntGameProfile;
+    window.TntGameProfile = TntGameProfile__Real;
+    window.__TntGameProfileDefined = true;   // only AFTER the real class is on window
+    if (_prev !== undefined && _prev !== TntGameProfile__Real) {
+        const _base = window.DoomGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(TntGameProfile__Real.prototype, _base.prototype);
+        }
+        try { Object.assign(TntGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, TntGameProfile__Real.prototype); } catch (e) {}
+    }
 }

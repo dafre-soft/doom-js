@@ -34,9 +34,31 @@ class DoomImageAssets {
     }
 
     load(callback = null) {
+        // The parallel boot can reach this before the profile files finished
+        // evaluating (window.DefaultGameProfile would still be a shim). Wait
+        // for the real classes, then collect manifests — never crash on stubs.
+        const attempt = () => {
+            let profiles;
+            try {
+                profiles = new GameProfileList().getAll();
+            } catch (e) {
+                profiles = null;
+            }
+            if ((profiles === null) || profiles.length === 0
+                || !GameProfileList._isReal(profiles[0].constructor)) {
+                setTimeout(attempt, 50);
+
+                return;
+            }
+            this._loadAll(profiles, callback);
+        };
+        attempt();
+    }
+
+    _loadAll(profiles, callback) {
         const files = [];
         const seen  = new Set();
-        for (const profile of new GameProfileList().getAll()) {
+        for (const profile of profiles) {
             for (const manifest of profile.imageAssets()) {
                 for (const key of manifest.keys) {
                     if (!seen.has(key)) {

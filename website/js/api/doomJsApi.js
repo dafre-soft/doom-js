@@ -97,6 +97,23 @@ class DoomJsApi {
         }
     }
 
+    // Resolves once window.DefaultGameProfile is the REAL class (its prototype
+    // carries a working buildAmmoTypes) — the parallel boot may still be
+    // running shim stand-ins when a launch is fired from the console early.
+    async _waitProfilesReady(timeoutMs = 30000) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const ListCtor = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
+            if ((typeof ListCtor === 'function') && (typeof ListCtor._defaultReady === 'function')
+                && (ListCtor._defaultReady() !== null)) {
+                return true;
+            }
+            await new Promise((r) => setTimeout(r, 50));
+        }
+
+        return false;
+    }
+
     async _launchLocked(options) {
         // The boot runs the scripts in ordered batches; a launch fired from
         // the console before the last batch landed would miss the classes it
@@ -134,6 +151,7 @@ class DoomJsApi {
         // profile straight from the WAD bytes (file:// / http links).
         let profile = null;
         if (options.raw !== true) {
+            await this._waitProfilesReady(options.timeoutMs ?? 30000);
             const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
             const ListCtor   = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
             const list       = ((typeof ListCtor === 'function') ? new ListCtor() : null);
@@ -146,6 +164,13 @@ class DoomJsApi {
         if ((profile === null) || (profile === undefined)) {
             const ProfileCtor = (typeof DefaultGameProfile === 'function') ? DefaultGameProfile : window.DefaultGameProfile;
             profile = new ProfileCtor();
+        }
+        // A shim/half-merged profile would crash deep inside the engine with
+        // "buildAmmoTypes must be implemented" — fail loudly here instead.
+        const ListG = (typeof GameProfileList === 'function') ? GameProfileList : window.GameProfileList;
+        if ((typeof ListG === 'function') && !ListG._isReal(profile.constructor)) {
+            throw new Error('doomApi.launch: game profiles are not fully loaded yet ('
+                + profile.getCode() + ' is still a boot stub). Hard-reload the page (Ctrl+Shift+R).');
         }
         let levelCode = this._ensureLevelCode(wadFile, options.levelCode);
         if ((levelCode === undefined) || (levelCode === null)) {

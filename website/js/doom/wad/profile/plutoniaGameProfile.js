@@ -3,7 +3,7 @@
  * behaviour as the id Doom II profile with its own level names; its finale
  * texts (P1TEXT…) are not transcribed, so its chapter ends stay silent.
  */
-class PlutoniaGameProfile extends window.DoomGameProfile {
+const PlutoniaGameProfile__Real = class PlutoniaGameProfile extends window.DoomGameProfile {
     getCode() {
         return 'plutonia';
     }
@@ -65,10 +65,19 @@ class PlutoniaGameProfile extends window.DoomGameProfile {
 }
 
 // Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
-if ((typeof window !== 'undefined') && (window.PlutoniaGameProfile !== undefined) && (window.PlutoniaGameProfile !== PlutoniaGameProfile)) {
-    Object.assign(window.PlutoniaGameProfile.prototype, PlutoniaGameProfile.prototype);
-    Object.getOwnPropertyNames(PlutoniaGameProfile).filter((k) => !['length','name','prototype'].includes(k))
-        .forEach((k) => { try { window.PlutoniaGameProfile[k] = PlutoniaGameProfile[k]; } catch (e) {} });
-} else if (typeof window !== 'undefined') {
-    window.PlutoniaGameProfile = PlutoniaGameProfile;
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.PlutoniaGameProfile;
+    window.PlutoniaGameProfile = PlutoniaGameProfile__Real;
+    window.__PlutoniaGameProfileDefined = true;   // only AFTER the real class is on window
+    if (_prev !== undefined && _prev !== PlutoniaGameProfile__Real) {
+        const _base = window.DoomGameProfile;
+        if ((_base != null) && (_base.prototype != null)) {
+            Object.setPrototypeOf(PlutoniaGameProfile__Real.prototype, _base.prototype);
+        }
+        try { Object.assign(PlutoniaGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, PlutoniaGameProfile__Real.prototype); } catch (e) {}
+    }
 }

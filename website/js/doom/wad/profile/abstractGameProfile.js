@@ -14,7 +14,6 @@
 // window.AbstractGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
 // before their base class landed). Merge the real body into that constructor so
 // every early `extends AbstractGameProfile` keeps working; otherwise declare it normally.
-window.__AbstractGameProfileDefined = true;
 const AbstractGameProfile__Real = class AbstractGameProfile {
 
     /**
@@ -867,14 +866,18 @@ const AbstractGameProfile__Real = class AbstractGameProfile {
 
 AbstractGameProfile._playerBodies = new Map();   // body data → its DoomMonsterDef
 
-if ((typeof window !== 'undefined') && (window.AbstractGameProfile !== undefined)
-    && (window.AbstractGameProfile !== AbstractGameProfile__Real)) {
-    Object.assign(window.AbstractGameProfile.prototype, AbstractGameProfile__Real.prototype);
-    Object.getOwnPropertyNames(AbstractGameProfile__Real)
-        .filter((k) => !['length', 'name', 'prototype'].includes(k))
-        .forEach((k) => { try { window.AbstractGameProfile[k] = AbstractGameProfile__Real[k]; } catch (e) {} });
-    Object.getOwnPropertyNames(AbstractGameProfile__Real.prototype)
-        .forEach((k) => { try { window.AbstractGameProfile.prototype[k] = AbstractGameProfile__Real.prototype[k]; } catch (e) {} });
-} else if ((typeof window === 'undefined') || (window.AbstractGameProfile === undefined)) {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.AbstractGameProfile;
     window.AbstractGameProfile = AbstractGameProfile__Real;
+    // The shim must never stand in for the real class again — set the flag
+    // ONLY now, after the real one is published.
+    window.__AbstractGameProfileDefined = true;
+    if (_prev !== undefined && _prev !== AbstractGameProfile__Real) {
+        Object.setPrototypeOf(AbstractGameProfile__Real.prototype, Function.prototype);
+        try { Object.assign(AbstractGameProfile__Real.prototype, _prev.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_prev.prototype, AbstractGameProfile__Real.prototype); } catch (e) {}
+    }
 }

@@ -12,7 +12,6 @@
 // window.DefaultGameProfile BEFORE this file evaluated (the parallel boot lets subclasses run
 // before their base class landed). Merge the real body into that constructor so
 // every early `extends DefaultGameProfile` keeps working; otherwise declare it normally.
-window.__DefaultGameProfileDefined = true;
 const DefaultGameProfile__Real = class DefaultGameProfile extends window.AbstractGameProfile {
 
     getCode() {
@@ -1227,16 +1226,31 @@ const DefaultGameProfile__Real = class DefaultGameProfile extends window.Abstrac
     // the own lump is absent (Freedoom provides real E4 lumps). MAPxx plays
     // the ordered commercial list (mapinfo/doom2.txt, mus_runnin + map − 1).
     levelMusicLumps(levelCode) {
+        // IMPORTANT: inside `class X__Real extends ... { ... }` the lexical
+        // name `DefaultGameProfile` does NOT exist in the method scope — only
+        // the __Real binding does. The old code fell back to that bare name,
+        // which threw ReferenceError ("can't access property 0,
+        // DefaultGameProfile.E4_MUSIC_REUSE is undefined" family). Read the
+        // tables at CALL time: own statics first, then walk up the prototype
+        // chain of the canonical window binding (covers shim-merge cases).
+        let tbl = null;
+        try { tbl = (typeof DefaultGameProfile__Real !== 'undefined') ? DefaultGameProfile__Real : null; } catch (e) {}
+        if ((tbl == null) || (tbl.E4_MUSIC_REUSE === undefined)) {
+            for (let c = (typeof window !== 'undefined' ? window.DefaultGameProfile : null); c != null; c = Object.getPrototypeOf(c)) {
+                if (c.E4_MUSIC_REUSE !== undefined) { tbl = c; break; }
+            }
+        }
+        if (tbl == null) tbl = {};
         const code = WadLevelCode.parse(levelCode);
         if (code.episode !== null) {
             const candidates = ['D_' + levelCode];
-            if (code.episode === 4) {
-                candidates.push(DefaultGameProfile.E4_MUSIC_REUSE[code.map - 1]);
+            if ((code.episode === 4) && Array.isArray(tbl.E4_MUSIC_REUSE)) {
+                candidates.push(tbl.E4_MUSIC_REUSE[code.map - 1]);
             }
             return candidates;
         }
         if (code.number !== null) {
-            const song = DefaultGameProfile.MAP_MUSIC[code.number - 1];
+            const song = Array.isArray(tbl.MAP_MUSIC) ? tbl.MAP_MUSIC[code.number - 1] : undefined;
             return ((song !== undefined) ? ['D_' + song] : []);
         }
 
@@ -1472,14 +1486,44 @@ DefaultGameProfile.E4_MUSIC_REUSE = [
     'D_E3M4', 'D_E3M2', 'D_E3M3', 'D_E1M5', 'D_E2M7', 'D_E2M4', 'D_E2M6', 'D_E2M5', 'D_E1M9'
 ];
 
-if ((typeof window !== 'undefined') && (window.DefaultGameProfile !== undefined)
-    && (window.DefaultGameProfile !== DefaultGameProfile__Real)) {
-    Object.assign(window.DefaultGameProfile.prototype, DefaultGameProfile__Real.prototype);
-    Object.getOwnPropertyNames(DefaultGameProfile__Real)
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+// NOTE: every static table assigned above lives on the lexical binding
+// `DefaultGameProfile` (the real class object itself). The OLD code replaced
+// window.DefaultGameProfile with the __Real identity and grafted prototypes —
+// but any early evaluator that captured the shim constructor kept calling
+// METHODS whose `DefaultGameProfile.*` static lookups resolved against a
+// binding without the tables (that is how "E4_MUSIC_REUSE is undefined"
+// happened even though the file ran to completion). So now we KEEP ONE
+// constructor: merge the real body INTO the existing window binding instead
+// of swapping identities, and copy all statics onto it as well.
+if (typeof window !== 'undefined') {
+    const _prev = window.DefaultGameProfile;
+    let _target;
+    if ((_prev === undefined) || (_prev === DefaultGameProfile__Real)) {
+        _target = DefaultGameProfile__Real;
+        window.DefaultGameProfile = _target;
+    } else {
+        // Shim (or earlier partial) constructor stays THE canonical identity:
+        // graft the real prototype + statics into it, reparent it under the
+        // real AbstractGameProfile currently on window.
+        _target = _prev;
+        try { Object.assign(_target.prototype, DefaultGameProfile__Real.prototype); } catch (e) {}
+        try { Object.setPrototypeOf(_target.prototype, DefaultGameProfile__Real.prototype); } catch (e) {}
+        const _abs = window.AbstractGameProfile;
+        if ((_abs != null) && (_abs.prototype != null)) {
+            try { Object.setPrototypeOf(_target, _abs); } catch (e) {}
+        }
+        window.__DefaultGameProfileMerged = true;
+    }
+    // Statics: copy every own property of the real class onto the target.
+    ['PLAYER_BODY', 'MULTIPLAYER_ITEM_RULES', 'ITEM_RESPAWN_RULES', 'MAP_MUSIC',
+     'E4_MUSIC_REUSE', 'BOSS_CUBE_SPAWNS', 'BRAIN_SCREAM'].forEach((k) => {
+        try { if (_target[k] === undefined) _target[k] = DefaultGameProfile[k]; } catch (e) {}
+    });
+    Object.getOwnPropertyNames(DefaultGameProfile)
         .filter((k) => !['length', 'name', 'prototype'].includes(k))
-        .forEach((k) => { try { window.DefaultGameProfile[k] = DefaultGameProfile__Real[k]; } catch (e) {} });
-    Object.getOwnPropertyNames(DefaultGameProfile__Real.prototype)
-        .forEach((k) => { try { window.DefaultGameProfile.prototype[k] = DefaultGameProfile__Real.prototype[k]; } catch (e) {} });
-} else if ((typeof window === 'undefined') || (window.DefaultGameProfile === undefined)) {
-    window.DefaultGameProfile = DefaultGameProfile__Real;
+        .forEach((k) => { try { if (_target[k] === undefined) _target[k] = DefaultGameProfile[k]; } catch (e) {} });
+    window.__DefaultGameProfileDefined = true;   // only AFTER the real class is on window
 }
