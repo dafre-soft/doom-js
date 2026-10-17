@@ -54,7 +54,8 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.join(REPO_ROOT, "website")
 WADS_DIR = os.path.join(SITE_DIR, "wads")
 PANEL_PORT = 7990
-DEFAULT_GAME_PORT = 8090
+VIEWER_PORT = 7890          # отдельный порт: «что видит игрок» (screen-зеркало)
+DEFAULT_GAME_PORT = 8123
 
 N_INPUTS = 10   # см. STATE_KEYS
 N_ACTIONS = 6   # forward, strafe, turn, pitch, fire, use
@@ -71,6 +72,7 @@ STATE_KEYS = [
 DEFAULT_CONFIG = {
     "game": {
         "wadServerPort": DEFAULT_GAME_PORT,
+        "viewerPort": VIEWER_PORT,
         "siteUrl": f"http://127.0.0.1:{DEFAULT_GAME_PORT}/index.html",
         "wadId": "freedoom1",
         "levelCode": "E1M1",
@@ -78,6 +80,7 @@ DEFAULT_CONFIG = {
         "maxSpeed": True,
         "headless": True,
         "canvasSize": 480,
+        "viewerFps": 15,
     },
     "neat": {
         "pop_size": 12,
@@ -144,69 +147,115 @@ def deep_merge(dst, src):
 
 
 # -----------------------------------------------------------------------------
-#  NEAT config -> текст для neat.config.load
+#  NEAT config -> neat.Config (neat-python 2.0)
 # -----------------------------------------------------------------------------
 
 def build_neat_config(cfg):
+    """Собирает корректный для neat-python 2.0 конфиг; возвращает (Config, text)."""
     n = cfg["neat"]
+    g = dict(n.get("genome_config", {}))
+
+    # перенос «своих» имён панели в канонические имена neat 2.0
+    rename = {
+        "mutate_add_link_prob": "conn_add_prob",
+        "mutate_remove_link_prob": "conn_delete_prob",
+        "mutate_add_node_prob": "node_add_prob",
+        "mutate_remove_node_prob": "node_delete_prob",
+    }
+    drop = {"mutate_indicator_prob", "tune_add_node_prob", "tune_add_link_prob",
+            "activate_probability", "clone_chance", "survival_threshold",
+            "min_species_size", "bias_init_range", "weight_init_range",
+            "hidden_nodes", "explicit_speciation", "feed_forward"}
+    genome = {}
+    for k, v in g.items():
+        if k in rename:
+            genome[rename[k]] = v
+        elif k not in drop:
+            genome[k] = v  # weight_mutation_rate, bias_mutation_power и т.п. — валидны
+
+    # ranges -> mean/stdev
+    br = g.get("bias_init_range")
+    if isinstance(br, (list, tuple)) and len(br) == 2:
+        genome.setdefault("bias_init_mean", (br[0] + br[1]) / 2.0)
+        genome.setdefault("bias_init_stdev", (br[1] - br[0]) / 4.0)
+    wr = g.get("weight_init_range")
+    if isinstance(wr, (list, tuple)) and len(wr) == 2:
+        genome.setdefault("weight_init_mean", (wr[0] + wr[1]) / 2.0)
+        genome.setdefault("weight_init_stdev", (wr[1] - wr[0]) / 4.0)
+
+    # num_hidden ОБЯЗАТЕЛЕН в [DefaultGenome] neat 2.0
+    genome["num_inputs"] = N_INPUTS
+    genome["num_outputs"] = N_ACTIONS
+    genome["num_hidden"] = len(g.get("hidden_nodes", []) or [])
+    genome["feed_forward"] = bool(g.get("feed_forward", True))
+
+    # initial_connection: 'partial_directed' -> 'partial <frac>'/'full_direct'
+    ic = str(n.get("initial_connection", "partial_directed")).replace("_directed", "_direct")
+    if ic.startswith("partial"):
+        frac = float(n.get("allowed_subconnections_fraction", 0.7))
+        ic = "partial %.3f" % frac
+    if ic not in ("unconnected", "fs_neat_nohidden", "fs_neat", "fs_neat_hidden",
+                  "full_nodirect", "full", "full_direct",
+                  "partial_nodirect", "partial", "partial_direct"):
+        ic = "partial 0.700"
+    genome["initial_connection"] = ic
 
     def _fmt(v):
         if isinstance(v, bool):
-            return str(v)
+            return "true" if v else "false"
         if isinstance(v, (list, tuple)):
             return ",".join(str(x) for x in v)
         return str(v)
 
-    # [NEAT] — параметры уровня конфигурации neat-python 2.0
     lines = [
         "[NEAT]",
-        f"pop_size = {int(n['pop_size'])}",
         "fitness_criterion = max",
         "fitness_threshold = 1000000",   # останавливаемся по победе/панели, не по фитнесу
-        "reset_on_extinction = True",
-        "no_fitness_termination = True",
+        "pop_size = %d" % int(n["pop_size"]),
+        "reset_on_extinction = true",
+        "no_fitness_termination = true",
     ]
     if "seed" in n:
-        lines.append(f"seed = {int(n['seed'])}")
+        lines.append("seed = %d" % int(n["seed"]))
 
-    # [DefaultGenome] — структура сети и мутации
-    g = dict(n["genome_config"])
-    # совместимость со старыми именами параметров из панели
-    if "compatibility_disjoint_coefficient" in g:
-        g["compat_disjoint_coefficient"] = g.pop("compatibility_disjoint_coefficient")
-    if "compatibility_weight_coefficient" in g:
-        g["compat_weight_coefficient"] = g.pop("compatibility_weight_coefficient")
-    genome_lines = [
-        "num_inputs = %d" % N_INPUTS,
-        "num_outputs = %d" % N_ACTIONS,
-    ]
-    for key, val in g.items():
-        genome_lines.append(f"{key} = {_fmt(val)}")
-    for key in ("activations", "aggregations", "initial_connection",
-                "allowed_subconnections_fraction", "max_candidates"):
-        if key in n:
-            genome_lines.append(f"{key} = {_fmt(n[key])}")
+    glines = ["%s = %s" % (k, _fmt(v)) for k, v in genome.items()]
+    if n.get("activations"):
+        glines.append("activation_options = %s" % _fmt(n["activations"]))
+        glines.append("activation_default = %s" % str(n["activations"][0]))
+    if n.get("aggregations"):
+        glines.append("aggregation_options = %s" % _fmt(n["aggregations"]))
+        glines.append("aggregation_default = %s" % str(n["aggregations"][0]))
 
-    # [DefaultSpeciesSet] / [DefaultStagnation] / [DefaultReproduction]
-    ss = n.get("species_set_config", {"compatibility_threshold": n["compatibility_threshold"],
-                                      "explicit_speciation": n["explicit_speciation"]})
-    stag = dict(n["stagnation_species_config"])
-    repro = n.get("reproduction_config", {"clone_chance": g.get("clone_chance", 0.1)})
+    ss = {"compatibility_threshold": float(
+        n.get("species_set_config", {}).get(
+            "compatibility_threshold", n.get("compatibility_threshold", 3.0)))}
+    stag = {k: v for k, v in n.get("stagnation_species_config", {}).items()
+            if k in ("max_stagnation", "species_fitness_func", "species_elitism")}
+    repro = {"elitism": 1,
+             "survival_threshold": float(g.get("survival_threshold", 0.2)),
+             "min_species_size": int(g.get("min_species_size", 2))}
+    if "clone_chance" in g:
+        repro["clone_chance"] = float(g["clone_chance"])
 
-    text = "\n".join(lines) + "\n\n[DefaultGenome]\n" + "\n".join(genome_lines) \
-        + "\n\n[DefaultSpeciesSet]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in ss.items()) \
-        + "\n\n[DefaultStagnation]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in stag.items()) \
-        + "\n\n[DefaultReproduction]\n" + "\n".join(f"{k} = {_fmt(v)}" for k, v in repro.items()) \
-        + "\n"
+    text = ("\n".join(lines) + "\n\n[DefaultGenome]\n" + "\n".join(glines)
+            + "\n\n[DefaultSpeciesSet]\n"
+            + "\n".join("%s = %s" % (k, _fmt(v)) for k, v in ss.items())
+            + "\n\n[DefaultStagnation]\n"
+            + "\n".join("%s = %s" % (k, _fmt(v)) for k, v in stag.items())
+            + "\n\n[DefaultReproduction]\n"
+            + "\n".join("%s = %s" % (k, _fmt(v)) for k, v in repro.items())
+            + "\n")
+
     tmp = tempfile.NamedTemporaryFile("w", suffix=".cfg", delete=False)
     tmp.write(text)
     tmp.close()
     path = tmp.name
     try:
-        return neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                           neat.DefaultSpeciesSet, neat.DefaultStagnation, path)
+        config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                             neat.DefaultSpeciesSet, neat.DefaultStagnation, path)
     finally:
         os.unlink(path)
+    return config, text
 
 
 # -----------------------------------------------------------------------------
@@ -267,7 +316,9 @@ window.__NEAT_DOOM__ = {
     this._acc.dmgTaken = 0; this._acc.healthGain = 0;
     return out;
   },
+  _lastA: [0,0,0,0,0,0],
   act(a) {
+    this._lastA = a.slice(0, 6);
     const api = window.doomApi;
     api.setMove(0, a[0], a[2] * 6, a[3] * 4);
     api.setInput('attack', a[4] > 0.5);
@@ -283,6 +334,34 @@ window.__NEAT_DOOM__ = {
   async restart(levelCode) {
     try { await window.doomApi.restartLevel(); return true; }
     catch (e) { try { await window.doomApi.warpToLevel(levelCode); return true; } catch (e2) { return false; } }
+  },
+  screen(scale) {
+    // то, что видит игрок: кадр canvas игры (или WebGL-канвасов doom-wasm)
+    try {
+      const cands = Array.from(document.querySelectorAll('canvas'));
+      let best = null;
+      for (const c of cands) {
+        if (!c || !c.width || !c.height) continue;
+        const id = (c.id || '').toLowerCase();
+        const cls = (c.className && String(c.className)).toLowerCase();
+        const score = (id.includes('screen') ? 100 : 0) + (cls.includes('screen') ? 50 : 0)
+                    + Math.min(40, (c.width * c.height) / 40000);
+        if (!best || score > best.score) best = {c, score};
+      }
+      if (!best) return {error: 'no canvas'};
+      const cv = best.c;
+      const s = Math.max(0.05, Math.min(1, (scale || 320) / cv.width));
+      const w = Math.max(1, Math.round(cv.width * s));
+      const h = Math.max(1, Math.round(cv.height * s));
+      const out = document.createElement('canvas');
+      out.width = w; out.height = h;
+      const ctx = out.getContext('2d');
+      ctx.drawImage(cv, 0, 0, w, h);
+      return {dataUrl: out.toDataURL('image/jpeg', 0.75), w: cv.width, h: cv.height,
+              fps: (window.__NEAT_DOOM__FPS === undefined ? null : window.__NEAT_DOOM__FPS)};
+    } catch (e) {
+      return {error: String(e && e.message || e)};
+    }
   },
   wads() {
     const B = window.DoomJsApi.BUILT_IN_WADS || {};
@@ -331,7 +410,7 @@ class Trainer:
         s = self.state
         try:
             cfg = s.config_snapshot()
-            config = build_neat_config(cfg)
+            config, _cfg_text = build_neat_config(cfg)
             self.add_log("NEAT config собран: pop=%s, входы=%s, выходы=%s"
                          % (cfg["neat"]["pop_size"], N_INPUTS, N_ACTIONS))
 
@@ -346,7 +425,7 @@ class Trainer:
                         genome.fitness = 0.0
                         continue
                     c2 = s.config_snapshot()
-                    fitness, info = self._evaluate(genome, page, c2)
+                    fitness, info = self._evaluate(genome, page, c2, config)
                     genome.fitness = fitness
                     self.add_log("  genome %-8s fitness=%8.2f  steps=%4d kills=%2d dmg=%5.1f dist=%6.1f"
                                  % (gid, fitness, info["steps"], info["kills"],
@@ -400,11 +479,11 @@ class Trainer:
             self.running = False
 
     # -- один эпизод для одного генома ---------------------------------------
-    def _evaluate(self, genome, page, cfg):
+    def _evaluate(self, genome, page, cfg, neat_config=None):
         ppo = cfg["ppo"]
         game = cfg["game"]
         import math
-        node_evals = _compile_genome(genome)
+        node_evals = _compile_genome(genome, neat_config or self.state.last_neat_config)
         total_reward = 0.0
         agg = {"steps": 0, "kills": 0, "dmg": 0.0, "distance": 0.0}
         episodes = int(ppo["episodes_per_genome"])
@@ -524,26 +603,25 @@ def _all_genomes(ga):
             yield gid, sp.genomes[gid]
 
 
-def _compile_genome(genome):
-    """Превращает genome в список вычислений (свой mini-feedforward)."""
-    ph = genome.phenotype
+def _compile_genome(genome, config):
+    """Фенотип генома: neat 2.0 собирает FeedForwardNetwork сам."""
+    ff = getattr(neat, "FeedForwardNetwork", None)
+    if ff is not None and hasattr(ff, "create"):
+        net = ff.create(genome, config.genome_config)
+        return {"neat": net}
+    # fallback: свой mini-feedforward (topo-order + активации)
+    gc = config.genome_config
     evals = []
-    for nid in ph.nodes:
-        node = genome.nodes[nid]
-        incoming = [(src, conn.weight, conn.enabled)
-                    for src, conn in node.incoming.items()
-                    if conn.enabled and getattr(conn, "recurrent", False) is False]
-        evals.append({
-            "id": nid,
-            "type": node.type,
-            "bias": node.bias,
-            "response": node.response,
-            "activation": node.activation,
-            "incoming": incoming,
-        })
+    for nid, node in genome.nodes.items():
+        incoming = [(src_id, conn.weight, conn.enabled)
+                    for src_id, conn in node.incoming.items()
+                    if conn.enabled and not getattr(conn, "recurrent", False)]
+        evals.append({"id": nid, "type": node.type, "bias": node.bias,
+                      "response": node.response, "activation": node.activation,
+                      "incoming": incoming})
     order = _topo_order(evals)
     return {"evals": evals, "order": order,
-            "inputs": list(ph.inputs), "outputs": list(ph.outputs)}
+            "inputs": list(gc.input_keys), "outputs": list(gc.output_keys)}
 
 
 def _topo_order(evals):
@@ -577,31 +655,29 @@ def _activate(name, x):
 
 
 def _forward(net, obs):
-    values = {}
-    inputs = list(obs)
-    for i, nid in enumerate(net["inputs"]):
-        values[nid] = inputs[i] if i < len(inputs) else 0.0
-    for e in net["order"]:
-        nid = e["id"]
-        if e["type"] == "input":
-            continue
-        s = e["bias"]
-        for src, w, en in e["incoming"]:
-            if en:
-                s += values.get(src, 0.0) * w
-        values[nid] = _activate(e["activation"], s * e["response"])
-    outs = []
-    for nid in net["outputs"]:
-        v = values.get(nid, 0.0)
-        outs.append(max(-1.0, min(1.0, v)))
+    if "neat" in net:
+        outs = [max(-1.0, min(1.0, float(v))) for v in net["neat"].activate(list(obs))]
+    else:
+        values = {}
+        inputs = list(obs)
+        for i, nid in enumerate(net["inputs"]):
+            values[nid] = inputs[i] if i < len(inputs) else 0.0
+        for e in net["order"]:
+            nid = e["id"]
+            if e["type"] == "input":
+                continue
+            s = e["bias"]
+            for src, w, en in e["incoming"]:
+                if en:
+                    s += values.get(src, 0.0) * w
+            values[nid] = _activate(e["activation"], s * e["response"])
+        outs = [max(-1.0, min(1.0, values.get(nid, 0.0))) for nid in net["outputs"]]
+    while len(outs) < N_ACTIONS:
+        outs.append(0.0)
     # маппинг: [-1..1] -> действия
-    fwd = outs[0]
-    strafe = outs[1]
-    turn = outs[2]
-    pitch = outs[3]
-    fire = 1.0 if outs[4] > 0.0 else 0.0
-    use = 1.0 if outs[5] > 0.0 else 0.0
-    return [fwd, strafe, turn, pitch, fire, use]
+    return [outs[0], outs[1], outs[2], outs[3],
+            1.0 if outs[4] > 0.0 else 0.0,
+            1.0 if outs[5] > 0.0 else 0.0]
 
 
 def _featurize(snap, prev):
@@ -658,6 +734,12 @@ class AppState:
         self.trainer = Trainer(self)
         self.last_checkpoint = None
         self.events = []
+        self.last_neat_config = None   # последний собранный neat.Config (для фенотипов)
+        # viewer: зеркало того, что видит агент-игрок (порт VIEWER_PORT)
+        self.viewer_frame = {"t": 0.0, "jpg": b"", "info": {}, "meta": {}}
+        self.viewer_lock = threading.Lock()
+        self.viewer_stop = threading.Event()
+        self.viewer_thread = None
 
     # -- конфиг ---------------------------------------------------------------
     def config_snapshot(self):
@@ -940,9 +1022,9 @@ class AppState:
     def checkpoint(self, ga, generation):
         path = os.path.join(REPO_ROOT, "doom_neat_ppo.checkpoint")
         try:
-            neat.Checkpointer(
-                ga, prefix=path, reference_config=None,
-                to_pickle=True).save(checkpoint_number=generation)
+            cp = neat.Checkpointer(generation_interval=None,
+                                   filename_prefix=path + "-")
+            cp.save_checkpoint(ga.config, ga.population, ga.species, generation)
             self.last_checkpoint = "%s-%d" % (path, generation)
         except Exception as e:
             self.trainer.add_log("checkpoint не сохранён: %s" % e)
