@@ -1,5 +1,5 @@
 {
- "version": "v1.1258",
+ "version": "v1.1259",
  "files": {
   "assets": [
    "/assets/uzdoom/doom/sprite/chip1.png",
@@ -50,7 +50,6 @@
    "/js/engine/entity/interaction.js",
    "/js/engine/entity/face.js",
    "/js/engine/entity/light.js",
-   "/js/engine/entity/object3d.js",
    "/js/engine/entity/billboard.js",
    "/js/engine/entity/texture.js",
    "/js/engine/entity/actorExternalForces.js",
