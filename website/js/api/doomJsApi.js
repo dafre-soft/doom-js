@@ -98,6 +98,17 @@ class DoomJsApi {
     }
 
     async _launchLocked(options) {
+        // The boot runs the scripts in ordered batches; a launch fired from
+        // the console before the last batch landed would miss the classes it
+        // needs (WadFile, profiles, DoomGame). Wait for the app instead of
+        // crashing with a ReferenceError.
+        if (!this.isReady()) {
+            const booted = await this.waitReady({timeoutMs: options.timeoutMs ?? 120000});
+            if (!booted) {
+                throw new Error('doomApi.launch: the app is still loading after the timeout — check the console for boot errors');
+            }
+        }
+
         // A menu-built game may have been offered while none was bound yet.
         if ((this._game === null) && (this._pendingGame !== null)) {
             this.bindGame(this._pendingGame);
@@ -112,9 +123,13 @@ class DoomJsApi {
         // 'heretic', 'tnt', 'plutonia'), or is sniffed from the WAD header.
         // Resolved lazily, after the whole boot finished — during a launch
         // fired early all the profile classes are guaranteed to be evaluated.
-        const profile   = ((typeof GameProfileList !== 'undefined')
-            ? new GameProfileList().getByCode(resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile))
-            : null);
+        const wantedCode = resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile);
+        const list       = ((typeof GameProfileList === 'function') ? new GameProfileList() : null);
+        let profile      = ((list !== null) ? list.getByCode(wantedCode) : null);
+        if ((profile === null) || (wantedCode === null)) {
+            // Last resort (e.g. a stale cached manifest): probe the WAD bytes.
+            profile = ((list !== null) ? list.getForWad(wadFile) : null);
+        }
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
             const names = wadFile.getLevelNames();
@@ -123,7 +138,9 @@ class DoomJsApi {
             }
             levelCode = names[0];
         }
-        doomSound.loadForWad(wadFile, meta.id);
+        if ((typeof doomSound !== 'undefined') && (doomSound !== null)) {
+            doomSound.loadForWad(wadFile, meta.id);
+        }
 
         const game = new DoomGame();
         this.bindGame(game);
@@ -348,8 +365,9 @@ class DoomJsApi {
             };
         }
 
-        // 3. Named editions load straight from /assets/uzdoom/<id>/ — again
-        // without touching the stored-WAD registry.
+        // 3. Named editions load straight from the served /wads/ folder — no
+        // profiles registry, no IndexedDB: fetch the link and parse it. The
+        // table is editable at runtime: doomApi.addWad('my.wad', '/wads/my.wad', 'doom').
         const wanted = String(options.wadId ?? '').toLowerCase();
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
@@ -361,18 +379,40 @@ class DoomJsApi {
         }
 
         // 4. Anything else: a WAD previously imported into storage, by id or title.
-        const registry = await new WadRegistry(new WadStorage()).init();
-        const list = await registry.getList();
-        const match = list.find((meta) => String(meta.id) === wanted)
-            ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(wanted))
-            ?? list.find((meta) => String(meta.title ?? '').toLowerCase().includes(wanted))
-            ?? null;
-        if ((match === null) || (match.id === undefined)) {
-            throw new Error('doomApi.launch: no WAD for "' + wanted + '" — pass {url: "…/game.wad"} (http/file link) or one of: '
-                + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
+        let match = null;
+        try {
+            const registry = await new WadRegistry(new WadStorage()).init();
+            const list = await registry.getList();
+            match = list.find((meta) => String(meta.id) === wanted)
+                ?? list.find((meta) => String(meta.name ?? '').toLowerCase().startsWith(wanted))
+                ?? list.find((meta) => String(meta.title ?? '').toLowerCase().includes(wanted))
+                ?? null;
+            if ((match !== null) && (match.id !== undefined)) {
+                return {wadFile: await registry.getWadFile(match.id), meta: match, profileCode: DoomJsApi._profileCodeOption(options)};
+            }
+        } catch (error) {
+            console.warn('doomApi.launch: the WAD registry is unavailable', error);
         }
 
-        return {wadFile: await registry.getWadFile(match.id), meta: match, profileCode: DoomJsApi._profileCodeOption(options)};
+        throw new Error('doomApi.launch: no WAD for "' + wanted + '" — pass {url: "/path/game.wad"} (http/file link) or one of: '
+            + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', ')
+            + '; register your own with doomApi.addWad(name, url, profileCode)');
+    }
+
+    /**
+     * Register a downloadable WAD under a short name so launch({wadId: name})
+     * resolves it without the storage registry.
+     *
+     * @param {string} name - key for launch({wadId})
+     * @param {string} url - http(s) link to the .wad (e.g. '/wads/my.wad')
+     * @param {string|null} profileCode - 'doom'|'doom2'|'freedoom'|'heretic'|'tnt'|'plutonia'|null to sniff
+     */
+    addWad(name, url, profileCode = null) {
+        DoomJsApi.BUILT_IN_WADS[String(name).toLowerCase()] = {
+            url: url, name: DoomJsApi._fileNameOf(url), profile: profileCode
+        };
+
+        return this;
     }
 
     /**

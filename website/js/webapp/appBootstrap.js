@@ -112,7 +112,51 @@ class AppBootstrap {
      * the boot a serial queue of ~250 round trips; batches fetch in parallel,
      * and defer keeps their execution order.
      */
-    static JS_BATCH_SIZE = 32;
+    static JS_BATCH_SIZE = 64;
+
+    /**
+     * Script tags appended after parsing started execute immediately (the
+     * spec only orders them against still-pending ones) — so every batch is
+     * awaited before the next one is inserted, and each file can rely on all
+     * previous files having run.
+     */
+    static async _loadScript(url) {
+        return new Promise((resolve) => {
+            let htmlTag = document.createElement("script");
+            htmlTag.setAttribute("type", "text/javascript");
+            htmlTag.setAttribute("src", url);
+            htmlTag.onload  = resolve;
+            htmlTag.onerror = resolve;
+            document.body.appendChild(htmlTag);
+        });
+    }
+
+    /**
+     * Fetch every listed script concurrently (one shared HTTP budget), then
+     * run them strictly in list order via insertBefore on the same position —
+     * ordered insertion executes synchronously in DOM order, so no file ever
+     * evaluates before its dependencies.
+     */
+    static loadScriptsInOrder(urls) {
+        const anchor = document.body.appendChild(document.createElement('script'));
+
+        return Promise.all(urls.map((url) => AppBootstrap._fetchScriptText(url)))
+            .then((sources) => {
+                for (const source of sources) {
+                    if (source === null) {
+                        continue;   // a failed download: skip, keep the order of the rest
+                    }
+                    let htmlTag = document.createElement("script");
+                    htmlTag.text = source;
+                    document.body.insertBefore(htmlTag, anchor);
+                }
+                anchor.remove();
+            });
+    }
+
+    static _fetchScriptText(url) {
+        return fetch(url).then((response) => ((response.ok) ? response.text() : null)).catch(() => null);
+    }
 
     /** @type {int}           */ currentFile;
     /** @type {AppDefinition} */ appDefinition;
@@ -446,9 +490,11 @@ class AppBootstrap {
     /**
      * Scripts used to be added one per previous script's onload — ~250 chained
      * round trips. They now load in batches of JS_BATCH_SIZE at once; the
-     * batch is marked `defer` so the browser still runs the scripts in list
-     * order (a plain async script would race: it can execute before an earlier
-     * one has finished parsing).
+     * batch is fetched concurrently and inserted strictly in list order (an
+     * async src tag would race: it can execute before an earlier one has
+     * finished parsing). The prelude carries the base classes every other
+     * file extends, so the whole js list runs exactly once, in manifest
+     * order, after the prelude landed first.
      */
     loadNextJsFile() {
         const urls = this.appDefinition.getFiles('js');
@@ -463,16 +509,12 @@ class AppBootstrap {
         const generation = this._jsGeneration;
 
         const end = Math.min(this.currentFile + AppBootstrap.JS_BATCH_SIZE, urls.length);
-        let landed = 0;
-        for (let index = this.currentFile; index < end; index++) {
-            let htmlTag = document.createElement("script");
-            htmlTag.setAttribute("type", "text/javascript");
-            htmlTag.setAttribute("src", this.buildUrl(urls[index]));
-            htmlTag.defer = true;
-            htmlTag.onload  = () => { if ((generation === this._jsGeneration) && (++landed === (end - this.currentFile))) { this.jsBatchSuccess(end); } };
-            htmlTag.onerror = () => { if (generation === this._jsGeneration) { this.jsFailedAt(index); if (++landed === (end - this.currentFile)) { this.jsBatchSuccess(end); } } };
-            document.body.appendChild(htmlTag);
-        }
+        const batch = urls.slice(this.currentFile, end).map((url) => this.buildUrl(url));
+        AppBootstrap.loadScriptsInOrder(batch).then(() => {
+            if (generation === this._jsGeneration) {
+                this.jsBatchSuccess(end);
+            }
+        });
     }
 
     jsBatchSuccess(nextFile) {
