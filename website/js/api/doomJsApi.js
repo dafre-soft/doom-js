@@ -797,12 +797,19 @@ class DoomJsApi {
         // One of those three works without any code change in the browser.
         const url = options.wadUrl ?? options.url ?? options.path ?? options.src ?? options.wadPath;
         if ((url !== undefined) && (url !== null)) {
-            const wanted = DoomJsApi._profileCodeOption(options);
+            const wanted     = DoomJsApi._profileCodeOption(options);
             const candidates = DoomJsApi._candidatesFor(url);
+            const fileName   = DoomJsApi._fileNameOf(url);
+            const stored     = await DoomJsApi._cachedWad(fileName.replace(/\.wad$/i, ''));
+            if (stored !== null) {
+                console.info('doomApi.launch("' + fileName + '"): loaded from browser storage (no download)');
+
+                return {wadFile: stored.wadFile, meta: stored.meta, profileCode: wanted};
+            }
 
             return {
-                wadFile: await DoomJsApi._fetchFirstAvailable(candidates),
-                meta:    {id: wanted ?? 'url', name: DoomJsApi._fileNameOf(url)},
+                wadFile: await DoomJsApi._fetchFirstAvailable(candidates, {name: fileName}),
+                meta:    {id: wanted ?? 'url', name: fileName},
                 profileCode: wanted
             };
         }
@@ -823,10 +830,18 @@ class DoomJsApi {
         // as '/wads/<name>.wad' first — and if that exists it IS the wanted WAD,
         // so its profile is sniffed from the bytes instead of guessing 'doom'.
         const wanted = String(options.wadId ?? options.wad ?? options.name ?? '').toLowerCase();
+        // 3a. Browser storage first: a WAD cached by an earlier launch is read
+        // from IndexedDB in milliseconds — no server, no download at all.
+        const cached = await DoomJsApi._cachedWad(wanted);
+        if (cached !== null) {
+            console.info('doomApi.launch("' + wanted + '"): loaded from browser storage (no download)');
+
+            return {wadFile: cached.wadFile, meta: cached.meta, profileCode: DoomJsApi._profileCodeOption(options)};
+        }
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
             return {
-                wadFile: await DoomJsApi._fetchFirstAvailable(DoomJsApi._candidateUrls(builtIn)),
+                wadFile: await DoomJsApi._fetchFirstAvailable(DoomJsApi._candidateUrls(builtIn), builtIn),
                 meta:    {id: wanted, name: builtIn.name},
                 profileCode: DoomJsApi._profileCodeOption(options) ?? builtIn.profile
             };
@@ -837,7 +852,7 @@ class DoomJsApi {
         if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
             const probes = ['/wads/' + wanted + '.wad', '/wads/' + wanted.toUpperCase() + '.WAD'];
             try {
-                const wadFile = await DoomJsApi._fetchFirstAvailable(probes);
+                const wadFile = await DoomJsApi._fetchFirstAvailable(probes, {name: wanted + '.wad'});
 
                 return {
                     wadFile: wadFile,
@@ -871,10 +886,12 @@ class DoomJsApi {
         }
 
         throw new Error('doomApi.launch: no WAD for "' + wanted + '". Browsers forbid reading file:// links from an http page, so a local DOOM.WAD cannot be fetched by path. Working options:'
-            + '\n  1) copy the .wad next to the site and launch({url: "/wads/DOOM.WAD"}) or launch({wadId: "doom"}) — names fall back to /wads/<name>.wad;'
-            + '\n  2) await doomApi.pickAndLaunch({levelCode: "E1M1"}) — opens the native file dialog once, then starts the game;'
-            + '\n  3) host it over CORS-enabled http(s): addWad("dum", "https://…/DOOM.WAD") and launch({wadId: "dum"});'
-            + '\nKnown names: ' + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
+            + '\n  1) start the helper server in the WAD folder:  python wad_server.py --dir C:/users/daf/downloads/base'
+            + '   — doomApi auto-registers everything it serves (open http://127.0.0.1:8090/api/launch for ready commands);'
+            + '\n  2) copy the .wad next to the site and launch({url: "/wads/DOOM.WAD"}) or launch({wadId: "doom"}) — names fall back to /wads/<name>.wad;'
+            + '\n  3) await doomApi.pickAndLaunch({levelCode: "E1M1"}) — opens the native file dialog once, then starts the game;'
+            + '\n  4) host it over CORS-enabled http(s): addWad("dum", "https://…/DOOM.WAD") and launch({wadId: "dum"});'
+            + '\nKnown names now: ' + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
     }
 
     /**
@@ -928,40 +945,83 @@ class DoomJsApi {
      * After that: launch({wadId: 'DOOM', levelCode: 'E1M1'}).
      * Returns the list of registered names (empty array if server is down).
      */
-    async addWadFromServer(baseUrl = 'http://127.0.0.1:8090') {
-        const base = String(baseUrl).replace(/\/+$/, '');
-        let data = null;
-        try {
-            const response = await fetch(base + '/api/wads', {cache: 'no-store'});
-            if (response.ok) {
-                data = await response.json();
+    async addWadFromServer(baseUrl = null) {
+        // Remember every server we successfully talked to (localStorage), so a
+        // page reload or a fresh console session still knows about 'duom' etc.
+        const bases = baseUrl
+            ? [String(baseUrl)]
+            : [...new Set([window.DOOM_WAD_SERVER ?? 'http://127.0.0.1:8090', ...this._savedServers()])];
+        let lastDataError = null;
+        for (const raw of bases) {
+            const base = raw.replace(/\/+$/, '');
+            let data = null;
+            try {
+                const response = await fetch(base + '/api/wads', {cache: 'no-store'});
+                if (response.ok) {
+                    data = await response.json();
+                } else {
+                    lastDataError = new Error('HTTP ' + response.status);
+                }
+            } catch (error) {
+                lastDataError = error;
+                continue; // try next remembered server
             }
-        } catch (error) {
-            console.warn('doomApi.addWadFromServer: no wad_server on ' + base
-                + ' — start it with: python wad_server.py --dir <папка с WAD>');
+            this._rememberServer(base);
+            const registered = [];
+            const cachedMeta = await DoomJsApi._cachedMetaMap().catch(() => new Map());
+            for (const entry of (data?.wads ?? [])) {
+                if (!entry.ok || !entry.file) {
+                    continue;
+                }
+                const key   = String(entry.name).toLowerCase();
+                const urls  = [base + entry.file, base + '/wad/' + encodeURIComponent(entry.fileName)];
+                // A WAD already sitting in browser storage needs no URL at all:
+                // launch() reads it straight from IndexedDB, offline and instant.
+                const stored = cachedMeta.get(entry.fileName.toLowerCase())
+                    ?? cachedMeta.get(key + '.wad')
+                    ?? cachedMeta.get('srv-' + key + '.wad') ?? null;
+                const record = {
+                    local: (stored !== null) ? ('browser-storage:' + stored.name) : undefined,
+                    urls:  urls,
+                    name:  entry.fileName,
+                    profile: entry.profile ?? null,
+                    levels: entry.levels ?? []
+                };
+                // Register BOTH spellings: the plain file name ('duom') and a
+                // server-prefixed alias ('srv-duom') so a launch({wadId}) never
+                // collides with the built-in names (doom/heretic/…) it shadows.
+                DoomJsApi.BUILT_IN_WADS[key]       = record;
+                DoomJsApi.BUILT_IN_WADS['srv-' + key] = record;
+                registered.push(entry.name);
+            }
+            console.info('doomApi.addWadFromServer: registered ' + registered.length
+                + ' WAD(s) from ' + base + ': [' + registered.join(', ') + ']'
+                + '\n  e.g. await doomApi.launch({wadId: "' + (registered[0] ?? 'doom')
+                + '", levelCode: "E1M1", maxSpeed: true});');
 
+            return registered;
+        }
+        console.warn('doomApi.addWadFromServer: no wad_server on [' + bases.join(', ')
+            + '] — start it with: python wad_server.py --dir <папка с WAD>'
+            + (lastDataError ? ' (' + lastDataError.message + ')' : ''));
+
+        return [];
+    }
+
+    _savedServers() {
+        try {
+            return JSON.parse(localStorage.getItem('doomApi.wadServers') ?? '[]');
+        } catch (e) {
             return [];
         }
-        const registered = [];
-        for (const entry of (data?.wads ?? [])) {
-            if (!entry.ok || !entry.file) {
-                continue;
-            }
-            const key = String(entry.name).toLowerCase();
-            DoomJsApi.BUILT_IN_WADS[key] = {
-                urls: [base + encodeURI(entry.file)],
-                name: entry.fileName,
-                profile: entry.profile ?? null,
-                levels: entry.levels ?? []
-            };
-            registered.push(entry.name);
-        }
-        console.info('doomApi.addWadFromServer: registered ' + registered.length
-            + ' WAD(s) from ' + base + ': [' + registered.join(', ') + ']'
-            + '\n  e.g. await doomApi.launch({wadId: "' + (registered[0] ?? 'doom')
-            + '", levelCode: "E1M1", maxSpeed: true});');
+    }
 
-        return registered;
+    _rememberServer(base) {
+        try {
+            const list = this._savedServers().filter((b) => b !== base);
+            list.unshift(base);
+            localStorage.setItem('doomApi.wadServers', JSON.stringify(list.slice(0, 5)));
+        } catch (e) { /* private mode — ignore */ }
     }
 
     /**
@@ -1033,7 +1093,11 @@ class DoomJsApi {
     static _candidateUrls(entry) {
         const out = [];
         for (const u of (entry.urls ?? [])) {
-            if ((typeof u === 'string') && (u.startsWith('/') || /^https?:/.test(u))) {
+            if ((typeof u === 'string') && /^https?:/.test(u)) {
+                out.push(u);
+                continue;
+            }
+            if ((typeof u === 'string') && u.startsWith('/')) {
                 out.push(u);
                 continue;
             }
@@ -1051,7 +1115,7 @@ class DoomJsApi {
     /** Fetch every candidate in PARALLEL — the first answer that parses as a
      * WAD wins (a dead localhost port fails in milliseconds, so the slowest
      * mirror never decides how long the launch takes). */
-    static async _fetchFirstAvailable(urls) {
+    static async _fetchFirstAvailable(urls, meta = null) {
         const attempts = urls.map(async (url) => {
             const wadFile = await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
 
@@ -1067,10 +1131,70 @@ class DoomJsApi {
             if (winner.url !== urls[0]) {
                 console.info('doomApi: loaded the WAD from "' + winner.url + '"');
             }
+            // Cache the bytes in IndexedDB so the next launch({wadId}) is
+            // instant and works even with the server turned off.
+            DoomJsApi._cacheWad(winner.url, meta).catch(() => {});
 
             return winner.wadFile;
         }
         throw new Error('doomApi.launch: could not download the WAD from any source (' + urls.join(', ') + ')');
+    }
+
+    /** Read a launch-named WAD straight out of browser storage (IndexedDB).
+     * Matches the exact stored name and its .wad spellings, so a WAD cached by
+     * an earlier launch starts instantly with no server running.
+     * @returns {Promise<{wadFile: WadFile, meta: object}|null>} */
+    static async _cachedWad(wanted) {
+        if ((wanted.length === 0) || (window.WadStorage === undefined)) {
+            return null;
+        }
+        try {
+            const storage = new (window.WadStorage)();
+            await storage.open();
+            const metas = await storage.listMeta();
+            const match = metas.find((m) => {
+                const n = String(m.name ?? '').toLowerCase();
+
+                return (n === wanted) || (n === wanted + '.wad') || (n === 'srv-' + wanted)
+                    || (n === 'srv-' + wanted + '.wad');
+            }) ?? null;
+            if (match === null) {
+                return null;
+            }
+            const stored = await storage.readWad(match.id);
+
+            return {wadFile: new (window.WadFile)(stored.data).parse(), meta: match};
+        } catch (error) {
+            console.warn('doomApi: browser-storage lookup failed:', error.message ?? error);
+
+            return null;
+        }
+    }
+
+    /** Save freshly downloaded bytes into the app's IndexedDB WAD store under
+     * their exact URL as name — launch() checks that store before any fetch. */
+    static async _cacheWad(url, meta) {
+        try {
+            const fileName = DoomJsApi._fileNameOf(url);
+            const base     = fileName.replace(/\.wad$/i, '').toLowerCase();
+            const extra    = String(meta?.name ?? '').trim();
+            const names    = [fileName, base + '.wad', 'srv-' + base + '.wad',
+                ((extra.length > 0) ? (extra.endsWith('.wad') ? extra : extra + '.wad') : '')]
+                .filter((n, i, a) => ((n.length > 0) && (a.indexOf(n) === i)));
+            const buffer   = await DoomJsApi._fetchBuffer(url);
+            let stored     = 0;
+            for (const name of names) {
+                if (await DoomJsApi._storeBuffer(buffer, name, url)) {
+                    ++stored;
+                }
+            }
+            if (stored > 0) {
+                console.info('doomApi: cached "' + fileName + '" in browser storage ('
+                    + Math.round(buffer.byteLength / 1048576) + ' MB) — offline launches work now');
+            }
+        } catch (error) {
+            console.warn('doomApi: could not cache the WAD locally:', error.message ?? error);
+        }
     }
 
     static async _fetchBuffer(url) {
@@ -1148,18 +1272,51 @@ class DoomJsApi {
      * @returns {string|null}
      */
     static sniffProfileCode(wadFile) {
-        const names = wadFile.getLevelNames();
-        if (names.some((name) => /^HEXMAP/i.test(name))) {
-            return 'heretic';
-        }
-        if (names.some((name) => /^E\dM\d$/i.test(name))) {
-            return 'doom';
-        }
-        if (names.some((name) => /^MAP\d\d$/i.test(name))) {
-            return 'doom';
+        try {
+            const names = wadFile.getLevelNames();
+            if (names.some((name) => /^HEXMAP/i.test(name))) {
+                return 'heretic';
+            }
+            if (names.some((name) => /^E\dM\d$/i.test(name))) {
+                return 'doom';
+            }
+            if (names.some((name) => /^MAP\d\d$/i.test(name))) {
+                return 'doom';
+            }
+        } catch (error) {
+            console.warn('doomApi.sniffProfileCode: unreadable WAD', error.message ?? error);
         }
 
         return null;
+    }
+
+    /** @returns {Promise<Map<string, object>>} stored WAD metadata by lower-cased name */
+    static async _cachedMetaMap() {
+        if (window.WadStorage === undefined) {
+            return new Map();
+        }
+        const storage = new (window.WadStorage)();
+        await storage.open();
+        const map = new Map();
+        for (const meta of await storage.listMeta()) {
+            map.set(String(meta.name ?? '').toLowerCase(), meta);
+        }
+
+        return map;
+    }
+
+    /** Store a raw ArrayBuffer in browser storage under an exact name — the
+     * same cache launch({wadId}) reads back. */
+    static async _storeBuffer(buffer, name, url) {
+        const storage = new (window.WadStorage)();
+        await storage.open();
+        if (await storage.findByName(name) !== null) {
+            return false; // already cached under this name
+        }
+        await storage.saveWad({name: name, size: buffer.byteLength, addedAt: Date.now(),
+            source: {type: 'url', value: url}}, buffer.slice(0));
+
+        return true;
     }
 
     _requireGame() {
@@ -1180,10 +1337,9 @@ class DoomJsApi {
     }
 }
 
-// The singleton every script reaches. window.doomApi is a placeholder Proxy
-// installed by index.html before the boot; once this file is in, the proxy
-// forwards to the real object through window.realDoomApi — and window.doomApi
-// itself, for any code (or console) that reads it directly.
+// The singleton every script reaches. This file is loaded SYNCHRONOUSLY from
+// index.html, before the app's ~300 boot scripts — so window.doomApi exists as
+// a REAL object from the first millisecond (no Proxy stubs that miss methods).
 const doomApi = new DoomJsApi();
 window.realDoomApi = doomApi;
 window.doomApi     = doomApi;
@@ -1212,12 +1368,19 @@ if ((window._earlyMenuGame !== undefined) && (window._earlyMenuGame !== null)) {
     window._earlyMenuGame = null;
 }
 
-// The app is up: main.js's ready callback ran before this last script started.
-doomApi._booted = true;
+// _booted stays false until the app's scripts landed; main.js's ready
+// callback (which runs after the last batch executed) flips it via
+// markBooted(), so waitReady()/launch() keep their meaning.
+doomApi._booted = false;
+DoomJsApi.prototype.markBooted = function () {
+    this._booted = true;
+
+    return this;
+};
+window.doomApiMarkBooted = () => doomApi.markBooted();
 
 // Convenience aliases so every spelling works from the console:
 // doomApi.launch({wad: 'doom'}), {name: ...}, {url: ...}, {path: ...} all resolve.
-DoomJsApi.prototype.addWad = DoomJsApi.prototype.addWad;
 window.doomApiAddWad = (name, url, profileCode) => doomApi.addWad(name, url, profileCode);
 
 // Auto-discovery of a local wad_server.py: if it answers, every WAD it serves
@@ -1241,4 +1404,52 @@ DoomJsApi.prototype._autoDiscoverWads = async function () {
     return [];
 };
 window.doomApiAddWadFromServer = (baseUrl) => doomApi.addWadFromServer(baseUrl);
+
+// --- Browser storage management: every WAD ever downloaded by launch() is
+// cached in IndexedDB; these calls list / delete / empty that cache.
+DoomJsApi.prototype.listSavedWads = async function () {
+    if (window.WadStorage === undefined) {
+        throw new Error('doomApi.listSavedWads: the app has not finished loading yet');
+    }
+    const storage = new (window.WadStorage)();
+    await storage.open();
+
+    return (await storage.listMeta()).map((meta) => ({
+        id: meta.id, name: meta.name, size: meta.size,
+        mb: Math.round(((meta.size ?? 0) / 1048576) * 10) / 10,
+        levels: (meta.levels ?? null), addedAt: meta.addedAt
+    }));
+};
+
+DoomJsApi.prototype.removeSavedWad = async function (nameOrId) {
+    const storage = new (window.WadStorage)();
+    await storage.open();
+    const key   = String(nameOrId).toLowerCase();
+    const match = (await storage.listMeta()).find((m) => (String(m.id) === key)
+        || (String(m.name).toLowerCase() === key)
+        || (String(m.name).toLowerCase() === key.replace(/\.wad$/i, '') + '.wad')) ?? null;
+    if ((match === null) || (match === undefined)) {
+        throw new Error('doomApi.removeSavedWad: nothing stored under "' + nameOrId + '"');
+    }
+    await storage.deleteWad(match.id);
+
+    return match.name;
+};
+
+DoomJsApi.prototype.clearSavedWads = async function () {
+    const names = [];
+    for (const w of await this.listSavedWads()) {
+        names.push(w.name);
+    }
+    for (const name of names) {
+        await this.removeSavedWad(name);
+    }
+
+    return names;
+};
+
+window.doomApiListSavedWads   = () => doomApi.listSavedWads();
+window.doomApiRemoveSavedWad  = (n) => doomApi.removeSavedWad(n);
+window.doomApiClearSavedWads  = () => doomApi.clearSavedWads();
+
 doomApi._autoDiscoverWads();

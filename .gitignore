@@ -4,3 +4,4 @@
 /.tmp.claude
 /.source
 /log
+__pycache__/

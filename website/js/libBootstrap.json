@@ -345,8 +345,7 @@
       "/js/doom/doomHostedSession.js",
       "/js/doom/doomFollowedSession.js",
       "/js/doom/doomGame.js",
-      "/js/main.js",
-      "/js/api/doomJsApi.js"
+      "/js/main.js"
     ]
   }
 }

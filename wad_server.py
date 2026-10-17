@@ -34,6 +34,7 @@ import ssl
 import struct
 import sys
 import urllib.request
+from urllib.parse import unquote, parse_qs
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8090
@@ -150,6 +151,32 @@ def scan_dir(root):
 
 class WadHandler(SimpleHTTPRequestHandler):
     root = "."
+    site = None  # папка с index.html (website/) — сервер так же хостит саму игру
+
+    def __init__(self, *a, **kw):
+        # SimpleHTTPRequestHandler serves from self.directory; point it at the
+        # SITE root so http://127.0.0.1:8090/ opens the game directly.
+        super().__init__(*a, directory=self.site or self.root, **kw)
+
+    def translate_path(self, path):
+        """Fallback: if a URL isn't found in the site dir, try the WAD dir,
+        then search by bare file name anywhere under root (so /DOOM.WAD and
+        /website/wads/duom.wad work no matter how the folders are nested)."""
+        p = super().translate_path(path)
+        if os.path.exists(p):
+            return p
+        rel = path.lstrip("/").replace("/", os.sep)
+        cand = os.path.join(self.root, rel)
+        if os.path.isfile(cand):
+            return cand
+        # /wads/x.wad when root itself is website/ -> already handled above;
+        # last resort: match by basename against scanned wad files
+        base = os.path.basename(rel).lower()
+        for dirpath, _dirs, files in os.walk(self.root):
+            for fn in files:
+                if fn.lower() == base:
+                    return os.path.join(dirpath, fn)
+        return p
 
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -162,8 +189,48 @@ class WadHandler(SimpleHTTPRequestHandler):
         self.send_response(204)
         self.end_headers()
 
+    def _serve_file(self, target):
+        """Serve an absolute file path found by our own search (name-based),
+        bypassing SimpleHTTPRequestHandler's cached self.path."""
+        if not os.path.isfile(target):
+            self.send_error(404, "file not found")
+            return
+        with open(target, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        ctype = ("application/octet-stream" if target.lower().endswith(".wad")
+                 else self.guess_type(target))
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        # /wad/<file> — alias: serve a WAD from the root by file NAME only,
+        # so URLs like http://127.0.0.1:8090/wad/DOOM.WAD work no matter how
+        # deep the file sits inside the scanned folder tree.
+        if path.startswith("/wad/"):
+            name = os.path.basename(unquote(path[len("/wad/"):]))
+            target = None
+            for dirpath, _dirnames, filenames in os.walk(self.root):
+                for fn in filenames:
+                    if fn.lower() == name.lower():
+                        target = os.path.join(dirpath, fn)
+                        break
+                if target:
+                    break
+            if target is None:
+                self.send_error(404, "no such wad: %s" % name)
+                return
+            with open(target, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/wads":
             data = scan_dir(self.root)
             body = json.dumps({"root": os.path.abspath(self.root), "wads": data},
@@ -174,7 +241,28 @@ class WadHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if path == "/":
+        if path == "/api/launch":
+            # Ready-to-paste JS commands for the browser console.
+            q = parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            port = self.server.server_address[1]
+            good = [w for w in scan_dir(self.root) if w["ok"]]
+            lines = []
+            for w in good:
+                lvl = (w["levels"][0] if w["levels"] else "E1M1")
+                lines.append("await doomApi.launch({wadId: '%s', levelCode: '%s', maxSpeed: true});"
+                             % (w["name"].lower(), lvl))
+            body = ("// python wad_server.py | root: %s | wads: %d\n"
+                    "// Paste into the browser console (after Ctrl+F5):\n%s\n"
+                    % (os.path.abspath(self.root), len(good), "\n".join(lines))).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/" and not self.site:
+            # No site folder found -> show the WAD dashboard instead of a 404.
+            # (When site IS found, "/" falls through to index.html below.)
             data = scan_dir(self.root)
             rows = "".join(
                 "<tr><td><a href='%s'>%s</a></td><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>"
@@ -194,6 +282,17 @@ class WadHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        # Last-resort fuzzy match: /duom.wad, /DOOM.WAD, /website/wads/duom.wad
+        # all resolve to the real file no matter which folder was passed to --dir.
+        base = os.path.basename(unquote(path)).lower()
+        if base and "." in base:
+            for search_root in [self.site or self.root, self.root]:
+                for dirpath, dirnames, filenames in os.walk(search_root):
+                    dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules")]
+                    for fn in filenames:
+                        if fn.lower() == base:
+                            self._serve_file(os.path.join(dirpath, fn))
+                            return
         super().do_GET()
 
     def log_message(self, fmt, *args):
@@ -228,15 +327,55 @@ def fetch_missing(dest_dir):
 
 # ----------------------------------------------------------------------------- main
 
+def find_site_root(root):
+    """Ищем корень сайта (папку с index.html) рядом с --dir / текущей папкой.
+
+    Порядок: сама папка --dir, её родители, ./website, затем подпапки на два
+    уровня вглубь (например repo/website/index.html). Первый найденный — сайт."""
+    candidates = []
+    p = os.path.abspath(root)
+    for _ in range(4):
+        candidates.append(p)
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    candidates.append(os.path.join(os.path.abspath(root), "website"))
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates += [here, os.path.join(here, "website")]
+    for c in candidates:
+        if os.path.isfile(os.path.join(c, "index.html")):
+            return c
+    # deep search under --dir and the script folder (skip heavy dirs)
+    skip = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+    for base in (os.path.abspath(root), here):
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            if "index.html" in filenames:
+                return dirpath
+            if dirpath.count(os.sep) - base.count(os.sep) >= 2:
+                dirnames[:] = []  # limit depth to 2 levels
+    return None
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Local CORS-enabled WAD server for doomApi")
+    repo_here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser(description="Local CORS-enabled WAD + site server for doomApi")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--dir", default=".", help="папка со WAD-файлами (по умолчанию текущая)")
+    ap.add_argument("--dir", default=".", help="папка со WAD-файлами (по умолчанию — корень репозитория/текущая)")
+    ap.add_argument("--site", default=None,
+                    help="корень сайта (папка с index.html). По умолчанию авто: website/ рядом со скриптом.")
     ap.add_argument("--fetch", action="store_true", help="скачать известные IWAD'ы в --dir")
     ap.add_argument("--scan", action="store_true", help="только показать список вадов и выйти")
     args = ap.parse_args()
 
+    # --dir по умолчанию: если в текущей папке нет .wad, но есть в ./website/wads — берём корень репозитория
     root = os.path.abspath(args.dir)
+    if args.dir == ".":
+        if not scan_dir(root) and (os.path.isdir(os.path.join(repo_here, "website"))):
+            root = repo_here
     if not os.path.isdir(root):
         print("нет папки: %s" % root)
         sys.exit(1)
@@ -245,7 +384,12 @@ def main():
         print("Скачивание известных IWAD в %s:" % root)
         fetch_missing(root)
 
+    site = os.path.abspath(args.site) if args.site else (find_site_root(root) or find_site_root(repo_here))
+    if site and not os.path.isfile(os.path.join(site, "index.html")):
+        site = None
+
     WadHandler.root = root
+    WadHandler.site = site
     os.chdir(root)
 
     wads = scan_dir(root)
@@ -269,6 +413,10 @@ def main():
     print("URL для doomApi:")
     for w in good:
         print("  http://127.0.0.1:%d%s   (wadId: '%s')" % (args.port, w["file"], w["name"]))
+    if site:
+        print("САЙТ игры: http://127.0.0.1:%d/  (открой и играй — index.html найден)" % args.port)
+    else:
+        print("!!! index.html не найден — запусти из корня репозитория или укажи --site <папка с index.html>")
     print("\nВ консоли браузера (после Ctrl+F5):")
     print("  await doomApi.addWadFromServer('http://127.0.0.1:%d');" % args.port)
     if good:
