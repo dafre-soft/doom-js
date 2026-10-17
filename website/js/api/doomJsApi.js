@@ -930,45 +930,75 @@ class DoomJsApi {
      * After that: launch({wadId: 'DOOM', levelCode: 'E1M1'}).
      * Returns the list of registered names (empty array if server is down).
      */
-    async addWadFromServer(baseUrl = 'http://127.0.0.1:8090') {
-        const base = String(baseUrl).replace(/\/+$/, '');
-        let data = null;
-        try {
-            const response = await fetch(base + '/api/wads', {cache: 'no-store'});
-            if (response.ok) {
-                data = await response.json();
+    async addWadFromServer(baseUrl = null) {
+        // Remember every server we successfully talked to (localStorage), so a
+        // page reload or a fresh console session still knows about 'duom' etc.
+        const bases = baseUrl
+            ? [String(baseUrl)]
+            : [...new Set([window.DOOM_WAD_SERVER ?? 'http://127.0.0.1:8090', ...this._savedServers()])];
+        let lastDataError = null;
+        for (const raw of bases) {
+            const base = raw.replace(/\/+$/, '');
+            let data = null;
+            try {
+                const response = await fetch(base + '/api/wads', {cache: 'no-store'});
+                if (response.ok) {
+                    data = await response.json();
+                } else {
+                    lastDataError = new Error('HTTP ' + response.status);
+                }
+            } catch (error) {
+                lastDataError = error;
+                continue; // try next remembered server
             }
-        } catch (error) {
-            console.warn('doomApi.addWadFromServer: no wad_server on ' + base
-                + ' — start it with: python wad_server.py --dir <папка с WAD>');
+            this._rememberServer(base);
+            const registered = [];
+            for (const entry of (data?.wads ?? [])) {
+                if (!entry.ok || !entry.file) {
+                    continue;
+                }
+                const key = String(entry.name).toLowerCase();
+                // Register BOTH spellings: the plain file name ('duom') and a
+                // server-prefixed alias ('srv-duom') so a launch({wadId}) never
+                // collides with the built-in names (doom/heretic/…) it shadows.
+                const alias = 'srv-' + key;
+                DoomJsApi.BUILT_IN_WADS[key] = {
+                    urls: [base + encodeURI(entry.file), base + '/wad/' + encodeURIComponent(entry.fileName)],
+                    name: entry.fileName,
+                    profile: entry.profile ?? null,
+                    levels: entry.levels ?? []
+                };
+                DoomJsApi.BUILT_IN_WADS[alias] = DoomJsApi.BUILT_IN_WADS[key];
+                registered.push(entry.name);
+            }
+            console.info('doomApi.addWadFromServer: registered ' + registered.length
+                + ' WAD(s) from ' + base + ': [' + registered.join(', ') + ']'
+                + '\n  e.g. await doomApi.launch({wadId: "' + (registered[0] ?? 'doom')
+                + '", levelCode: "E1M1", maxSpeed: true});');
 
+            return registered;
+        }
+        console.warn('doomApi.addWadFromServer: no wad_server on [' + bases.join(', ')
+            + '] — start it with: python wad_server.py --dir <папка с WAD>'
+            + (lastDataError ? ' (' + lastDataError.message + ')' : ''));
+
+        return [];
+    }
+
+    _savedServers() {
+        try {
+            return JSON.parse(localStorage.getItem('doomApi.wadServers') ?? '[]');
+        } catch (e) {
             return [];
         }
-        const registered = [];
-        for (const entry of (data?.wads ?? [])) {
-            if (!entry.ok || !entry.file) {
-                continue;
-            }
-            const key = String(entry.name).toLowerCase();
-            // Register BOTH spellings: the plain file name ('duom') and a
-            // server-prefixed alias ('srv-duom') so a launch({wadId}) never
-            // collides with the built-in names (doom/heretic/…) it shadows.
-            const alias = 'srv-' + key;
-            DoomJsApi.BUILT_IN_WADS[key] = {
-                urls: [base + encodeURI(entry.file), base + '/wad/' + encodeURIComponent(entry.fileName)],
-                name: entry.fileName,
-                profile: entry.profile ?? null,
-                levels: entry.levels ?? []
-            };
-            DoomJsApi.BUILT_IN_WADS[alias] = DoomJsApi.BUILT_IN_WADS[key];
-            registered.push(entry.name);
-        }
-        console.info('doomApi.addWadFromServer: registered ' + registered.length
-            + ' WAD(s) from ' + base + ': [' + registered.join(', ') + ']'
-            + '\n  e.g. await doomApi.launch({wadId: "' + (registered[0] ?? 'doom')
-            + '", levelCode: "E1M1", maxSpeed: true});');
+    }
 
-        return registered;
+    _rememberServer(base) {
+        try {
+            const list = this._savedServers().filter((b) => b !== base);
+            list.unshift(base);
+            localStorage.setItem('doomApi.wadServers', JSON.stringify(list.slice(0, 5)));
+        } catch (e) { /* private mode — ignore */ }
     }
 
     /**

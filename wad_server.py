@@ -260,7 +260,9 @@ class WadHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if path == "/":
+        if path == "/" and not self.site:
+            # No site folder found -> show the WAD dashboard instead of a 404.
+            # (When site IS found, "/" falls through to index.html below.)
             data = scan_dir(self.root)
             rows = "".join(
                 "<tr><td><a href='%s'>%s</a></td><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>"
@@ -326,7 +328,10 @@ def fetch_missing(dest_dir):
 # ----------------------------------------------------------------------------- main
 
 def find_site_root(root):
-    """Ищем корень сайта (папку с index.html) рядом с --dir / текущей папкой."""
+    """Ищем корень сайта (папку с index.html) рядом с --dir / текущей папкой.
+
+    Порядок: сама папка --dir, её родители, ./website, затем подпапки на два
+    уровня вглубь (например repo/website/index.html). Первый найденный — сайт."""
     candidates = []
     p = os.path.abspath(root)
     for _ in range(4):
@@ -341,6 +346,17 @@ def find_site_root(root):
     for c in candidates:
         if os.path.isfile(os.path.join(c, "index.html")):
             return c
+    # deep search under --dir and the script folder (skip heavy dirs)
+    skip = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+    for base in (os.path.abspath(root), here):
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            if "index.html" in filenames:
+                return dirpath
+            if dirpath.count(os.sep) - base.count(os.sep) >= 2:
+                dirnames[:] = []  # limit depth to 2 levels
     return None
 
 
