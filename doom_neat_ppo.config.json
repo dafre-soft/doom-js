@@ -1,0 +1,78 @@
+{
+  "game": {
+    "wadServerPort": 8123,
+    "siteUrl": "http://127.0.0.1:8090/index.html",
+    "wadId": "freedoom1",
+    "levelCode": "E1M1",
+    "skill": 3,
+    "maxSpeed": true,
+    "headless": true,
+    "canvasSize": 480
+  },
+  "neat": {
+    "pop_size": 12,
+    "compatibility_threshold": 3.0,
+    "explicit_speciation": false,
+    "stagnation_species_config": {
+      "max_stagnation": 8,
+      "species_fitness_func": "mean"
+    },
+    "genome_config": {
+      "feed_forward": true,
+      "hidden_nodes": [],
+      "bias_init_range": [
+        -1.0,
+        1.0
+      ],
+      "weight_init_range": [
+        -1.0,
+        1.0
+      ],
+      "activate_probability": 0.95,
+      "clone_chance": 0.1,
+      "mutate_add_node_prob": 0.03,
+      "mutate_add_link_prob": 0.04,
+      "mutate_remove_link_prob": 0.05,
+      "mutate_indicator_prob": 0.05,
+      "tune_add_node_prob": 0.03,
+      "tune_add_link_prob": 0.04,
+      "survival_threshold": 0.2,
+      "min_species_size": 2,
+      "weight_mutation_rate": 0.1,
+      "weight_mutation_power": 1.0,
+      "bias_mutation_rate": 0.1,
+      "response_mutation_rate": 0.1
+    },
+    "activations": [
+      "sigmoid",
+      "tanh",
+      "relu",
+      "sin",
+      "gaussian",
+      "identity"
+    ],
+    "aggregations": [
+      "sum"
+    ],
+    "initial_connection": "partial_directed",
+    "allowed_subconnections_fraction": 0.7,
+    "max_candidates": 10
+  },
+  "ppo": {
+    "episodes_per_genome": 2,
+    "steps_per_episode": 600,
+    "tick_hz": 10,
+    "clip_epsilon": 0.2,
+    "gae_lambda": 0.95,
+    "gamma": 0.99,
+    "reward_health_gain": 2.0,
+    "reward_damage": -3.0,
+    "reward_kill": 25.0,
+    "reward_death": -30.0,
+    "reward_distance": 0.02,
+    "reward_time": -0.001,
+    "reward_fire_hit": 1.0,
+    "turn_scale": 6.0,
+    "restart_on_death": true
+  }
+}

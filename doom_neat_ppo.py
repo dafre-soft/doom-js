@@ -639,6 +639,8 @@ def _featurize(snap, prev):
 # -----------------------------------------------------------------------------
 
 class AppState:
+    wad_httpd_ref = None  # последний in-process ThreadingHTTPServer (для _free_port)
+
     def __init__(self, args):
         self.args = args
         self.lock = threading.Lock()
@@ -646,7 +648,9 @@ class AppState:
         if args.config_file and os.path.isfile(args.config_file):
             with open(args.config_file) as f:
                 deep_merge(self.config, json.load(f))
-        self.wad_proc = None
+        self.wad_proc = None       # legacy (subprocess больше не используется)
+        self.wad_thread = None     # in-process wad_server (monkey-patch импорта)
+        self.wad_httpd = None      # экземпляр ThreadingHTTPServer для graceful stop
         self.panel_proc = None
         self.playwright = None
         self.browser = None
@@ -672,27 +676,165 @@ class AppState:
 
     # -- игровой сервер (wad_server.py) ---------------------------------------
     def start_game_server(self):
+        """Автозапуск wad_server В ЭТОМ ПРОЦЕССЕ через monkey-patch импорта:
+        wad_server импортируется как модуль, его main() запускается в фоновом
+        потоке с подменёнными sys.argv (параметры --port/--dir из конфига).
+        Никаких subprocess — если что-то не так, ошибка видна сразу."""
         cfg = self.config_snapshot()["game"]
         port = int(cfg["wadServerPort"])
+        # порт уже открыт? проверим, наш ли это сервер (/api/wads), иначе перезапустим
         if self._port_open(port):
-            return True, "порт %d уже занят — считаем сервер запущенным" % port
+            if self.wad_httpd is not None and self._is_our_wad_server(port):
+                return True, "wad_server уже работает в этом процессе на :%d" % port
+            if self._is_our_wad_server(port):
+                self.trainer.add_log("на :%d висит старый wad_server — освобождаем порт" % port)
+            else:
+                self.trainer.add_log("порт :%d занят чем-то чужим — освобождаем" % port)
+            self._free_port(port)
         script = os.path.join(REPO_ROOT, "wad_server.py")
         if not os.path.isfile(script):
             return False, "wad_server.py не найден в %s" % REPO_ROOT
-        proc = subprocess.Popen(
-            [sys.executable, script, "--port", str(port), "--dir", REPO_ROOT],
-            cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.wad_proc = proc
-        for _ in range(40):
+        try:
+            ws = self._import_wad_server(script)
+        except Exception as e:
+            self.trainer.add_log("импорт wad_server упал: %s\n%s"
+                                 % (e, traceback.format_exc()))
+            return False, "импорт wad_server не удался: %s" % e
+
+        # --- monkey-patch: аргументы командной строки для main() внутри процесса
+        fake_argv = ["wad_server.py", "--port", str(port), "--dir", REPO_ROOT]
+        real_argv = sys.argv
+        err_buf = []
+
+        def run():
+            # wad_server.main() делает os.chdir(root) — защищаем рабочую папку
+            # панели импортом monkey-patch'а os.chdir на время запуска.
+            real_cwd = os.getcwd()
+            real_chdir = os.chdir
+            def safe_chdir(path):
+                try:
+                    real_chdir(path)
+                except OSError:
+                    pass  # нет доступа к папке — играем из текущей
+            os.chdir = safe_chdir
+            sys.argv = fake_argv  # патчим argv на время main(); восстанавливаем в finally
+            try:
+                ws.main()
+            except SystemExit:
+                pass  # main() может вызвать sys.exit при отсутствии папки
+            except Exception as e:
+                err_buf.append(str(e))
+                self.trainer.add_log("wad_server exception: %s\n%s"
+                                     % (e, traceback.format_exc()))
+            finally:
+                sys.argv = real_argv
+                os.chdir = real_chdir
+                try:
+                    real_chdir(real_cwd)
+                except OSError:
+                    pass
+
+        t = threading.Thread(target=run, daemon=True, name="wad_server")
+        t.start()
+        self.wad_thread = t
+        for _ in range(60):
             if self._port_open(port):
-                return True, "wad_server запущен на :%d (pid %d)" % (port, proc.pid)
+                # подхватываем экземпляр сервера для graceful stop'а
+                try:
+                    self.wad_httpd = sys.modules["wad_server"].LAST_SERVER
+                    AppState.wad_httpd_ref = self.wad_httpd
+                except Exception:
+                    self.wad_httpd = None
+                self.trainer.add_log("wad_server поднят в-process на :%d" % port)
+                return True, "wad_server запущен в этом процессе на :%d" % port
+            if not t.is_alive():
+                break
             time.sleep(0.25)
-        return False, "wad_server не поднялся на :%d" % port
+        msg = "wad_server не поднялся на :%d" % port
+        if err_buf:
+            msg += ": %s" % err_buf[0]
+        self.trainer.add_log(msg)
+        return False, msg
+
+    def _is_our_wad_server(self, port):
+        """Отвечает ли на порту именно wad_server (есть GET /api/wads)?"""
+        try:
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%d/api/wads" % port, timeout=1.5) as r:
+                json.loads(r.read().decode())
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _free_port(port):
+        """Пытаемся освободить порт: сначала корректный shutdown своего сервера,
+        затем kill процессa-владельца (Windows: netstat+taskkill, Unix: lsof/fuser)."""
+        if AppState.wad_httpd_ref is not None:
+            try:
+                AppState.wad_httpd_ref.shutdown()
+                time.sleep(0.5)
+                if not AppState._port_open(port):
+                    return True
+            except Exception:
+                pass
+        pid = None
+        try:
+            if os.name == "nt":
+                out = subprocess.check_output(
+                    "netstat -ano -p tcp", shell=True, text=True, errors="ignore")
+                for line in out.splitlines():
+                    cols = line.split()
+                    if len(cols) >= 5 and cols[3].lower() == "listening" \
+                            and cols[1].endswith(":%d" % port):
+                        pid = cols[4]
+                        break
+                if pid:
+                    subprocess.call("taskkill /F /PID %s" % pid, shell=True)
+            else:
+                out = subprocess.run(["sh", "-c",
+                                      "fuser %d/tcp 2>/dev/null || lsof -ti tcp:%d"
+                                      % (port, port)],
+                                     capture_output=True, text=True).stdout.split()
+                if out:
+                    for p in out:
+                        subprocess.call(["kill", "-9", p])
+            time.sleep(0.5)
+            return not AppState._port_open(port)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _import_wad_server(script):
+        """Импорт wad_server.py как модуля (кэшируется в sys.modules)."""
+        if "wad_server" in sys.modules:
+            return sys.modules["wad_server"]
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("wad_server", script)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["wad_server"] = mod  # патчим до exec, чтобы main() видел модуль
+        spec.loader.exec_module(mod)
+        return mod
 
     def stop_game_server(self):
-        if self.wad_proc and self.wad_proc.poll() is None:
-            self.wad_proc.terminate()
-            return True, "wad_server остановлен"
+        port = int(self.config_snapshot()["game"]["wadServerPort"])
+        stopped = False
+        if self.wad_httpd is not None:
+            try:
+                self.wad_httpd.shutdown()   # graceful: останавливает serve_forever
+                stopped = True
+            except Exception:
+                pass
+            self.wad_httpd = None
+        self.wad_thread = None
+        if stopped:
+            for _ in range(20):  # ждём реального освобождения порта
+                if not self._port_open(port):
+                    break
+                time.sleep(0.25)
+            return True, "wad_server корректно остановлен, порт :%d освобождён" % port
+        if self._port_open(port):
+            return True, "поток остановлен; порт :%d занят внешним процессом" % port
         return True, "wad_server не запущен"
 
     @staticmethod
