@@ -1761,10 +1761,14 @@ window.HereticGameProfile.PLAYER_BODY = {
 };
 
 // Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
-if ((typeof window !== 'undefined') && (window.HereticGameProfile !== undefined) && (window.HereticGameProfile !== HereticGameProfile)) {
-    Object.assign(window.HereticGameProfile.prototype, HereticGameProfile.prototype);
-    Object.getOwnPropertyNames(HereticGameProfile).filter((k) => !['length','name','prototype'].includes(k))
-        .forEach((k) => { try { window.HereticGameProfile[k] = HereticGameProfile[k]; } catch (e) {} });
-} else if (typeof window !== 'undefined') {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.HereticGameProfile;
     window.HereticGameProfile = HereticGameProfile;
+    if (_prev !== undefined && _prev !== HereticGameProfile) {
+        Object.setPrototypeOf(HereticGameProfile.prototype, window.DefaultGameProfile.prototype);
+        try { Object.setPrototypeOf(_prev.prototype, HereticGameProfile.prototype); } catch (e) {}
+    }
 }

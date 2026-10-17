@@ -65,10 +65,14 @@ class TntGameProfile extends window.DoomGameProfile {
 }
 
 // Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
-if ((typeof window !== 'undefined') && (window.TntGameProfile !== undefined) && (window.TntGameProfile !== TntGameProfile)) {
-    Object.assign(window.TntGameProfile.prototype, TntGameProfile.prototype);
-    Object.getOwnPropertyNames(TntGameProfile).filter((k) => !['length','name','prototype'].includes(k))
-        .forEach((k) => { try { window.TntGameProfile[k] = TntGameProfile[k]; } catch (e) {} });
-} else if (typeof window !== 'undefined') {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.TntGameProfile;
     window.TntGameProfile = TntGameProfile;
+    if (_prev !== undefined && _prev !== TntGameProfile) {
+        Object.setPrototypeOf(TntGameProfile.prototype, window.DoomGameProfile.prototype);
+        try { Object.setPrototypeOf(_prev.prototype, TntGameProfile.prototype); } catch (e) {}
+    }
 }

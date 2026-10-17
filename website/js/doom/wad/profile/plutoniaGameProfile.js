@@ -65,10 +65,14 @@ class PlutoniaGameProfile extends window.DoomGameProfile {
 }
 
 // Publish for the boot shims and early evaluators (see js/boot/shim-gameProfiles.js).
-if ((typeof window !== 'undefined') && (window.PlutoniaGameProfile !== undefined) && (window.PlutoniaGameProfile !== PlutoniaGameProfile)) {
-    Object.assign(window.PlutoniaGameProfile.prototype, PlutoniaGameProfile.prototype);
-    Object.getOwnPropertyNames(PlutoniaGameProfile).filter((k) => !['length','name','prototype'].includes(k))
-        .forEach((k) => { try { window.PlutoniaGameProfile[k] = PlutoniaGameProfile[k]; } catch (e) {} });
-} else if (typeof window !== 'undefined') {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.PlutoniaGameProfile;
     window.PlutoniaGameProfile = PlutoniaGameProfile;
+    if (_prev !== undefined && _prev !== PlutoniaGameProfile) {
+        Object.setPrototypeOf(PlutoniaGameProfile.prototype, window.DoomGameProfile.prototype);
+        try { Object.setPrototypeOf(_prev.prototype, PlutoniaGameProfile.prototype); } catch (e) {}
+    }
 }

@@ -118,14 +118,14 @@ const DoomGameProfile__Real = class DoomGameProfile extends window.DefaultGamePr
     }
 }
 
-if ((typeof window !== 'undefined') && (window.DoomGameProfile !== undefined)
-    && (window.DoomGameProfile !== DoomGameProfile__Real)) {
-    Object.assign(window.DoomGameProfile.prototype, DoomGameProfile__Real.prototype);
-    Object.getOwnPropertyNames(DoomGameProfile__Real)
-        .filter((k) => !['length', 'name', 'prototype'].includes(k))
-        .forEach((k) => { try { window.DoomGameProfile[k] = DoomGameProfile__Real[k]; } catch (e) {} });
-    Object.getOwnPropertyNames(DoomGameProfile__Real.prototype)
-        .forEach((k) => { try { window.DoomGameProfile.prototype[k] = DoomGameProfile__Real.prototype[k]; } catch (e) {} });
-} else if ((typeof window === 'undefined') || (window.DoomGameProfile === undefined)) {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.DoomGameProfile;
     window.DoomGameProfile = DoomGameProfile__Real;
+    if (_prev !== undefined && _prev !== DoomGameProfile__Real) {
+        Object.setPrototypeOf(DoomGameProfile__Real.prototype, window.DefaultGameProfile.prototype);
+        try { Object.setPrototypeOf(_prev.prototype, DoomGameProfile__Real.prototype); } catch (e) {}
+    }
 }

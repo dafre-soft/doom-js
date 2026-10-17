@@ -33,29 +33,59 @@ class GameProfileList {
         GameProfileList.__instance = this;
     }
 
+    // A real game profile always implements its own ammo catalog; a boot shim
+    // (or any half-evaluated stand-in) does not carry the method anywhere on
+    // its prototype chain. This is the cheap "is the real class here?" probe.
+    static _isReal(Ctor) {
+        try {
+            return (typeof Ctor === 'function') && (Ctor.prototype != null)
+                && (typeof Ctor.prototype.buildAmmoTypes === 'function')
+                && !String(Ctor.prototype.buildAmmoTypes).includes('must be implemented');
+        } catch (e) {
+            return false;
+        }
+    }
+
     // Built lazily on first use — see the note above the class. Every entry is
     // wrapped in try/catch: during a fast parallel boot some profile classes
     // may still be evaluating, so we fall back to DefaultGameProfile (a plain
-    // doom-format WAD) instead of crashing the whole launch.
+    // doom-format WAD) instead of crashing the whole launch. Shim stand-ins
+    // are rejected via _isReal so their abstract stubs never reach the game.
     static _make(name) {
         try {
             // The boot publishes every class on window (shim interop); reading it
             // there is TDZ-safe even while the declaring file is still evaluating.
             const Ctor = (typeof window !== 'undefined' ? window[name] : undefined) ?? globalThis[name];
-            if (typeof Ctor === 'function') {
+            if (GameProfileList._isReal(Ctor)) {
                 return new Ctor();
             }
         } catch (error) {
             console.warn('GameProfileList: profile "' + name + '" not ready yet', error);
         }
 
-        return (typeof DefaultGameProfile === 'function')
-            ? new DefaultGameProfile()
-            : new window.DefaultGameProfile();
+        return new window.DefaultGameProfile();
+    }
+
+    static _defaultReady() {
+        const Ctor = (typeof window !== 'undefined' ? window.DefaultGameProfile : undefined)
+            ?? ((typeof DefaultGameProfile !== 'undefined') ? DefaultGameProfile : undefined);
+
+        return GameProfileList._isReal(Ctor) ? Ctor : null;
     }
 
     static _byCode() {
-        if ((GameProfileList.__cache ?? null) === null) {
+        const cache = GameProfileList.__cache;
+        // Rebuild while anything is still missing/half-loaded: once every real
+        // profile class has been evaluated the cache becomes final and stable.
+        const need = ['heretic', 'freedoom', 'tnt', 'plutonia', 'doom'];
+        const complete = (cache !== null) && (cache.default instanceof Object)
+            && GameProfileList._isReal(cache.default.constructor)
+            && need.every((code) => GameProfileList._isReal(cache[code].constructor));
+        if (!complete) {
+            const defCtor = GameProfileList._defaultReady();
+            if (defCtor === null) {
+                return null;   // nothing real yet — caller must wait/retry
+            }
             GameProfileList.__cache = {
                 heretic:   GameProfileList._make('HereticGameProfile'),
                 freedoom:  GameProfileList._make('FreedoomGameProfile'),
@@ -64,7 +94,7 @@ class GameProfileList {
                 doom:      GameProfileList._make('DoomGameProfile'),
                 doom1:     GameProfileList._make('DoomGameProfile'),
                 doom2:     GameProfileList._make('DoomGameProfile'),
-                default:   new DefaultGameProfile()
+                default:   new defCtor()
             };
         }
 
@@ -75,19 +105,17 @@ class GameProfileList {
         return ['heretic', 'freedoom', 'tnt', 'plutonia', 'doom'];
     }
 
-    // The list, resolved on every call (cheap: the profile objects are cached
-    // in __cache once their classes exist). Never stored on the instance — an
-    // early `new GameProfileList()` at boot must not freeze a half-loaded set.
     _profiles() {
         const byCode = GameProfileList._byCode();
+        if (byCode === null) {
+            return [];   // real profile classes are still evaluating — retry later
+        }
 
         return this._orderedCodes().map((code) => byCode[code]);
     }
 
     _fallback() {
-        return (typeof DefaultGameProfile === 'function')
-            ? new DefaultGameProfile()
-            : new window.DefaultGameProfile();
+        return new window.DefaultGameProfile();
     }
 
     /**

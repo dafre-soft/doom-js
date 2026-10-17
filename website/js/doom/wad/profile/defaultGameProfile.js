@@ -1472,14 +1472,14 @@ DefaultGameProfile.E4_MUSIC_REUSE = [
     'D_E3M4', 'D_E3M2', 'D_E3M3', 'D_E1M5', 'D_E2M7', 'D_E2M4', 'D_E2M6', 'D_E2M5', 'D_E1M9'
 ];
 
-if ((typeof window !== 'undefined') && (window.DefaultGameProfile !== undefined)
-    && (window.DefaultGameProfile !== DefaultGameProfile__Real)) {
-    Object.assign(window.DefaultGameProfile.prototype, DefaultGameProfile__Real.prototype);
-    Object.getOwnPropertyNames(DefaultGameProfile__Real)
-        .filter((k) => !['length', 'name', 'prototype'].includes(k))
-        .forEach((k) => { try { window.DefaultGameProfile[k] = DefaultGameProfile__Real[k]; } catch (e) {} });
-    Object.getOwnPropertyNames(DefaultGameProfile__Real.prototype)
-        .forEach((k) => { try { window.DefaultGameProfile.prototype[k] = DefaultGameProfile__Real.prototype[k]; } catch (e) {} });
-} else if ((typeof window === 'undefined') || (window.DefaultGameProfile === undefined)) {
+// The REAL class always wins on window — a boot shim must never shadow it.
+// Subclasses created via `extends window.X` while the shim was in place are
+// re-parented onto the real prototype so their own methods stay reachable.
+if (typeof window !== 'undefined') {
+    const _prev = window.DefaultGameProfile;
     window.DefaultGameProfile = DefaultGameProfile__Real;
+    if (_prev !== undefined && _prev !== DefaultGameProfile__Real) {
+        Object.setPrototypeOf(DefaultGameProfile__Real.prototype, window.AbstractGameProfile.prototype);
+        try { Object.setPrototypeOf(_prev.prototype, DefaultGameProfile__Real.prototype); } catch (e) {}
+    }
 }
