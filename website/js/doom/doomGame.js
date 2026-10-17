@@ -344,6 +344,16 @@ class DoomGame {
         return ((this._wadMeta !== null) ? this._wadMeta.id : null);
     }
 
+    // Decode and play the sounds/music of a WAD without the menu flow —
+    // used by doomApi.launch() so a console-started level is not silent.
+    startSoundsForWad(wadFile, wadId = null) {
+        if ((typeof doomSound !== 'undefined') && (doomSound !== null)) {
+            doomSound.loadForWad(wadFile, ((wadId !== null) ? wadId : this._wadId()));
+        }
+
+        return this;
+    }
+
     // --- Save / load ---
 
     // Restored by the next startFromWad, on top of the rebuilt level.

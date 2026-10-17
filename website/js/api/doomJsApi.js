@@ -110,7 +110,11 @@ class DoomJsApi {
         // No profile probing through the IndexedDB registry: the code comes
         // straight from the call ({profile} / {wadId} — 'doom', 'freedoom',
         // 'heretic', 'tnt', 'plutonia'), or is sniffed from the WAD header.
-        const profile   = new GameProfileList().getByCode(resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile));
+        // Resolved lazily, after the whole boot finished — during a launch
+        // fired early all the profile classes are guaranteed to be evaluated.
+        const profile   = ((typeof GameProfileList !== 'undefined')
+            ? new GameProfileList().getByCode(resolved.profileCode ?? DoomJsApi.sniffProfileCode(wadFile))
+            : null);
         let levelCode = options.levelCode;
         if ((levelCode === undefined) || (levelCode === null)) {
             const names = wadFile.getLevelNames();
@@ -123,6 +127,9 @@ class DoomJsApi {
 
         const game = new DoomGame();
         this.bindGame(game);
+        // The level's own sounds and music start with the level: a launch from
+        // the console must not wait for the menu flow that normally does it.
+        game.startSoundsForWad(wadFile, meta.id);
         await game.startFromWad(wadFile, levelCode, meta, null,
             ((options.skill !== undefined) && (options.skill !== null))
                 ? options.skill : DoomSimulation.DEFAULT_SKILL, profile);
