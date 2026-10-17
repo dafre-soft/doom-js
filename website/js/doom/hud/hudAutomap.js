@@ -120,6 +120,43 @@ class HudAutomap extends AbstractHud {
         }
     }
 
+    /**
+     * Pin the map to the top-right corner as a minimap (a quarter of the
+     * screen), or back to the full inset panel. The framing recomputes itself
+     * on the next frame through _syncSize.
+     */
+    setCorner(corner) {
+        this._corner = (corner === true);
+        if (this._root !== null) {
+            this._applyFrame();
+        }
+
+        return this;
+    }
+
+    isCorner() {
+        return (this._corner === true);
+    }
+
+    _applyFrame() {
+        const inset = HudAutomap.INSET_PERCENT;
+        if (this._corner === true) {
+            Object.assign(this._root.style, {
+                left:   (100 - HudAutomap.CORNER_SIZE_PERCENT - inset) + '%',
+                top:    inset + '%',
+                width:  HudAutomap.CORNER_SIZE_PERCENT + '%',
+                height: HudAutomap.CORNER_SIZE_PERCENT + '%'
+            });
+            return;
+        }
+        Object.assign(this._root.style, {
+            left:   inset + '%',
+            top:    inset + '%',
+            width:  ((100 - 2 * inset) + '%'),
+            height: ((100 - 2 * inset) + '%')
+        });
+    }
+
     // Nothing to show: the key stays inert rather than raising an empty panel.
     toggle() {
         if (this._automap === null) {

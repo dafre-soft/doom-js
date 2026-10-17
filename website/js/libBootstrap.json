@@ -1,5 +1,5 @@
 {
-    "version": "v1.1256",
+    "version": "v1.1257",
     "files": {
         "assets": [
             "/assets/uzdoom/doom/sprite/chip1.png",
@@ -343,6 +343,7 @@
             "/js/doom/doomHostedSession.js",
             "/js/doom/doomFollowedSession.js",
             "/js/doom/doomGame.js",
+            "/js/api/doomJsApi.js",
             "/js/main.js"
         ]
     }

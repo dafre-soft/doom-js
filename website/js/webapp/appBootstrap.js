@@ -107,6 +107,13 @@ class AppDefinition {
 AppDefinition.FILE_TYPES = ['assets', 'css', 'js'];
 
 class AppBootstrap {
+    /**
+     * How many scripts are fetched at once. One chained onload per script made
+     * the boot a serial queue of ~250 round trips; batches fetch in parallel,
+     * and defer keeps their execution order.
+     */
+    static JS_BATCH_SIZE = 32;
+
     /** @type {int}           */ currentFile;
     /** @type {AppDefinition} */ appDefinition;
     /** @type {boolean}  */ offline;
@@ -389,24 +396,22 @@ class AppBootstrap {
     }
 
     loadNextCssFile() {
-        let htmlTag = document.createElement("link");
-        htmlTag.setAttribute("rel", "stylesheet");
-        htmlTag.setAttribute("type", "text/css");
-        htmlTag.setAttribute("href", this.buildUrl(this.appDefinition.getFile('css', this.currentFile)));
-        htmlTag.onload  = this.cssSuccess.bind(this);
-        htmlTag.onerror = this.cssFailed.bind(this);
-        document.body.appendChild(htmlTag);
+        // The few css files load in parallel; the js boot starts when all land.
+        const urls = this.appDefinition.getFiles('css');
+        Promise.all(urls.map((url) => new Promise((resolve) => {
+            let htmlTag = document.createElement("link");
+            htmlTag.setAttribute("rel", "stylesheet");
+            htmlTag.setAttribute("type", "text/css");
+            htmlTag.setAttribute("href", this.buildUrl(url));
+            htmlTag.onload  = resolve;
+            htmlTag.onerror = () => { this.cssFailed(); resolve(); };
+            document.body.appendChild(htmlTag);
+        }))).then(() => this.cssSuccess());
     }
 
     cssSuccess() {
-        this.loadingFileCurrent ++;
+        this.loadingFileCurrent += this.appDefinition.getFiles('css').length;
         this.displayLoadingBar();
-
-        this.currentFile++;
-        if (this.currentFile < this.appDefinition.getFiles('css').length) {
-            this.loadNextCssFile();
-            return;
-        }
 
         this.currentFile = 0;
         this.loadNextJsFile();
@@ -416,13 +421,44 @@ class AppBootstrap {
         this.resourceFailed(this.appDefinition.getFile('css', this.currentFile));
     }
 
+    /**
+     * Scripts used to be added one per previous script's onload — ~250 chained
+     * round trips. They now load in batches of JS_BATCH_SIZE at once; the
+     * batch is marked `defer` so the browser still runs the scripts in list
+     * order (a plain async script would race: it can execute before an earlier
+     * one has finished parsing).
+     */
     loadNextJsFile() {
-        let htmlTag = document.createElement("script");
-        htmlTag.setAttribute("type", "text/javascript");
-        htmlTag.setAttribute("src", this.buildUrl(this.appDefinition.getFile('js', this.currentFile)));
-        htmlTag.onload  = this.jsSuccess.bind(this);
-        htmlTag.onerror = this.jsFailed.bind(this);
-        document.body.appendChild(htmlTag);
+        const urls = this.appDefinition.getFiles('js');
+        if (this.currentFile >= urls.length) {
+            this.jsSuccessBatch(urls.length);
+            return;
+        }
+
+        // A same-document navigation can leave a pending batch that never
+        // finishes; do not let its callbacks fire on top of a new boot.
+        this._jsGeneration = (this._jsGeneration ?? 0) + 1;
+        const generation = this._jsGeneration;
+
+        const end = Math.min(this.currentFile + AppBootstrap.JS_BATCH_SIZE, urls.length);
+        let landed = 0;
+        for (let index = this.currentFile; index < end; index++) {
+            let htmlTag = document.createElement("script");
+            htmlTag.setAttribute("type", "text/javascript");
+            htmlTag.setAttribute("src", this.buildUrl(urls[index]));
+            htmlTag.defer = true;
+            htmlTag.onload  = () => { if ((generation === this._jsGeneration) && (++landed === (end - this.currentFile))) { this.jsBatchSuccess(end); } };
+            htmlTag.onerror = () => { if (generation === this._jsGeneration) { this.jsFailedAt(index); if (++landed === (end - this.currentFile)) { this.jsBatchSuccess(end); } } };
+            document.body.appendChild(htmlTag);
+        }
+    }
+
+    jsBatchSuccess(nextFile) {
+        this.loadingFileCurrent += (nextFile - this.currentFile);
+        this.displayLoadingBar();
+
+        this.currentFile = nextFile;
+        this.loadNextJsFile();
     }
 
     jsSuccess() {
@@ -439,8 +475,20 @@ class AppBootstrap {
         this.startApp();
     }
 
+    jsSuccessBatch(count) {
+        this.loadingFileCurrent += count;
+        this.displayLoadingBar();
+
+        this.currentFile = 0;
+        this.startApp();
+    }
+
     jsFailed() {
         this.resourceFailed(this.appDefinition.getFile('js', this.currentFile));
+    }
+
+    jsFailedAt(index) {
+        this.resourceFailed(this.appDefinition.getFile('js', index));
     }
 
     startApp() {

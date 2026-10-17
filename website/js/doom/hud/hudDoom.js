@@ -77,6 +77,11 @@ class HudDoom extends AbstractHud {
         return this;
     }
 
+    // The automap layer itself (the API pins it to a corner, shows it, hides it).
+    getAutomapHud() {
+        return this._automap;
+    }
+
     setLevelInfo(wadName, levelCode, skill, levelName = null) {
         this._debug.setLevelInfo(wadName, levelCode, skill, levelName);
         this._automap.setLevelInfo(levelCode, levelName);

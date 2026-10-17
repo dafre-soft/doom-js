@@ -47,6 +47,56 @@
         </div>
         <script src="./js/webapp/appBootstrap.js"></script>
         <script>
+            // window.doomApi answers from the first millisecond, even while the
+            // app's ~250 scripts are still loading: until the real API file is
+            // in, this proxy queues nothing and only reports readiness. Every
+            // method works as soon as the boot has finished (or use
+            // await doomApi.waitReady() / doomApi.isReady()).
+            const doomApiStubs = {
+                isReady: () => false,
+                waitReady: async (options = {}) => {
+                    const timeoutMs = ((options instanceof Object && typeof options.timeoutMs === 'number') ? options.timeoutMs : 120000);
+                    const deadline = Date.now() + timeoutMs;
+                    while (Date.now() < deadline) {
+                        if ((window.realDoomApi !== undefined) && window.realDoomApi.isReady()) {
+                            return true;
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                    }
+                    return false;
+                },
+                attach: (game) => window.doomApi.attach(game),
+                offerGame: (game) => { window._earlyMenuGame = game; }
+            };
+            window.doomApi = new Proxy({}, {
+                get(target, property) {
+                    if (property === 'then') {
+                        return undefined;   // keep it non-thenable
+                    }
+                    const real = window.realDoomApi;
+                    if ((real !== undefined) && (real !== null)) {
+                        const value = real[property];
+                        return (typeof value === 'function') ? value.bind(real) : value;
+                    }
+                    if (typeof doomApiStubs[property] === 'function') {
+                        return doomApiStubs[property];
+                    }
+                    if ((property === 'api') || (property === 'draw')) {
+                        // api.draw / draw exist for the AI overlay; before boot they simply queue nothing.
+                        return (property === 'api') ? {draw: () => window.doomApi} : (() => window.doomApi);
+                    }
+                    throw new Error('doomApi.' + String(property) + ': the app is still loading — await doomApi.waitReady() first');
+                },
+                set(target, property, value) {
+                    const real = window.realDoomApi;
+                    if ((real !== undefined) && (real !== null)) {
+                        real[property] = value;
+                        return true;
+                    }
+                    doomApiStubs[property] = value;
+                    return true;
+                }
+            });
             appBootstrap.addBootstrapDefinition('/js/libBootstrap.json');
         </script>
     </body>
