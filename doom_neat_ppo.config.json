@@ -1,7 +1,7 @@
 {
   "game": {
     "wadServerPort": 8123,
-    "siteUrl": "http://127.0.0.1:8090/index.html",
+    "siteUrl": "http://127.0.0.1:8123/index.html",
     "wadId": "freedoom1",
     "levelCode": "E1M1",
     "skill": 3,
