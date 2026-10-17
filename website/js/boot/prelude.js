@@ -303,6 +303,7 @@ class Object3d extends AbstractLoadedEntity {
         return this;
     }
 }
+if (typeof Object3d.PROJECTION_MIN_Z === 'undefined') { Object3d.PROJECTION_MIN_Z = 1e-5; }
 
 class Object3dRendererBase {
     constructor() {
@@ -3039,3 +3040,81 @@ class AbstractMoverBuilder {
 // carries the bases that used to crash when batches raced each other; those
 // five files are out of the manifest now, so nothing redeclares them.
 
+// Static data tables — mirrored from their source files so subclasses and
+// consumers can read them right after the prelude ran, even when the
+// defining file lands in a later batch. Plain property assignments are
+// idempotent, so the original files re-running them changes nothing.
+AbstractGameProfile._playerBodies = new Map();   // body data → its DoomMonsterDef
+DefaultGameProfile.BRAIN_SCREAM = ['A_BrainScream', {
+    effect:    'brainExplosion',
+    fromX:     -196,
+    toX:       320,
+    stepX:     8,
+    aheadY:    -320,
+    liftMax:   512,
+    startJitterTics: 8
+}];
+
+// SpawnFly (bossbrain.zs): the probability ladder of a boss cube, decreasing
+// likelihood. `below` is the exclusive upper bound of the 0..255 roll, so an
+// entry weighs (its bound − the previous one) out of 256.
+DefaultGameProfile.BOSS_CUBE_SPAWNS = [
+    {below: 50,  kind: 'imp'},
+    {below: 90,  kind: 'demon'},
+    {below: 120, kind: 'spectre'},
+    {below: 130, kind: 'painelemental'},
+    {below: 160, kind: 'cacodemon'},
+    {below: 162, kind: 'archvile'},
+    {below: 172, kind: 'revenant'},
+    {below: 192, kind: 'arachnotron'},
+    {below: 222, kind: 'mancubus'},
+    {below: 246, kind: 'hellknight'},
+    {below: 256, kind: 'baron'}
+];
+
+// A_PosAttack / A_SPosAttack / A_CPosAttack all fire the same 3 × (1..5)
+// bullet, and every hitscan monster of the bestiary uses one of them.
+DefaultGameProfile.MONSTER_BULLET = {damage: {base: 3, dice: 5}, puff: 'puff'};
+// Player.ColorRange 112-127, then Player.Colorset 0-3 of doomplayer.zs: first index and marker of
+// each (its last follows from the range's length).
+DefaultGameProfile.PLAYER_COLORS = {
+    range: [0x70, 0x7F],
+    slots: [
+        {from: 0x70, marker: 0x72},
+        {from: 0x60, marker: 0x62},
+        {from: 0x40, marker: 0x42},
+        {from: 0x20, marker: 0x22}
+    ]
+};
+// zscript doomplayer.zs.
+DefaultGameProfile.PLAYER_BODY = {
+    code: 'player', name: 'Marine', sprite: 'PLAY',
+    health: 100, radius: 16, height: 56, speed: 1, painChance: 255,
+    states: {
+        spawn:   [['A', -1]],
+        see:     [['ABCD', 4, null, 'see']],
+        missile: [['E', 12, null, 'spawn']],
+        melee:   [['F', 6, null, 'missile', true]],
+        pain:    [['G', 4], ['G', 4, 'A_Pain', 'spawn']],
+        death:   [['H', 10], ['I', 10, 'A_PlayerScream'], ['J', 10, 'A_NoBlocking'], ['KLM', 10], ['N', -1]],
+        xdeath:  [['O', 5], ['P', 5, 'A_XScream'], ['Q', 5, 'A_NoBlocking'], ['RSTUV', 5], ['W', -1]]
+    }
+};
+// P_GiveWeapon gives 5 clips for a placed weapon in deathmatch, 2 otherwise.
+DefaultGameProfile.MULTIPLAYER_ITEM_RULES = {weaponsStay: true, keysStay: true, deathmatchWeaponClips: 5};
+DefaultGameProfile.ITEM_RESPAWN_RULES     = {delayTics: 1050, revealTics: 0, effect: 'itemFog', sound: 'misc/spawn', neverTypes: [2022, 2024]};
+
+// Commercial level songs in map order (mapinfo/doom2.txt, the vanilla
+// mus_runnin + map − 1 sequence): lump = 'D_' + name.
+DefaultGameProfile.MAP_MUSIC = [
+    'RUNNIN', 'STALKS', 'COUNTD', 'BETWEE', 'DOOM',   'THE_DA', 'SHAWN',  'DDTBLU',
+    'IN_CIT', 'DEAD',   'STLKS2', 'THEDA2', 'DOOM2',  'DDTBL2', 'RUNNI2', 'DEAD2',
+    'STLKS3', 'ROMERO', 'SHAWN2', 'MESSAG', 'COUNT2', 'DDTBL3', 'AMPIE',  'THEDA3',
+    'ADRIAN', 'MESSG2', 'ROMER2', 'TENSE',  'SHAWN3', 'OPENIN', 'EVIL',   'ULTIMA'
+];
+
+// Ultimate Doom's fourth episode reuses earlier songs (linuxdoom s_sound.c
+// spmus table, E4M1..E4M9) — its WAD ships no D_E4M* lump.
+DefaultGameProfile.E4_MUSIC_REUSE = [
+    'D_E3M4', 'D_E3M2', 'D_E3M3', 'D_E1M5', 'D_E2M7', 'D_E2M4', 'D_E2M6', 'D_E2M5', 'D_E1M9'
+];

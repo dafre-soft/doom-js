@@ -133,25 +133,38 @@ class AppBootstrap {
 
     /**
      * Fetch every listed script concurrently (one shared HTTP budget), then
-     * run them strictly in list order via insertBefore on the same position —
-     * ordered insertion executes synchronously in DOM order, so no file ever
-     * evaluates before its dependencies.
+     * run them strictly in list order by injecting the source text into the
+     * global scope with an indirect eval — synchronous, in-order execution, so
+     * no file ever evaluates before its dependencies. Indirect eval keeps the
+     * code in the GLOBAL scope: top-level 'class'/'let' declarations behave
+     * exactly like classic script tags (no redeclaration errors when the same
+     * file is evaluated again after a soft reload).
      */
-    static loadScriptsInOrder(urls) {
-        const anchor = document.body.appendChild(document.createElement('script'));
+    static async loadScriptsInOrder(urls) {
+        const sources  = await Promise.all(urls.map((url) => AppBootstrap._fetchScriptText(url)));
+        const globalEval = eval;
 
-        return Promise.all(urls.map((url) => AppBootstrap._fetchScriptText(url)))
-            .then((sources) => {
-                for (const source of sources) {
-                    if (source === null) {
-                        continue;   // a failed download: skip, keep the order of the rest
-                    }
-                    let htmlTag = document.createElement("script");
-                    htmlTag.text = source;
-                    document.body.insertBefore(htmlTag, anchor);
-                }
-                anchor.remove();
-            });
+        // A page reload that keeps the JS context (PWA update flow, dev tools
+        // "disable cache" soft reload) would re-evaluate every class and die
+        // on "redeclaration of let/class" — remember what already ran.
+        window.__loadedScripts ??= new Set();
+
+        for (let index = 0; index < sources.length; index++) {
+            const source = sources[index];
+            if (window.__loadedScripts.has(urls[index])) {
+                continue;   // already evaluated in this JS context
+            }
+            if (source === null) {
+                console.error('AppBootstrap - failed to fetch script ' + urls[index]);
+                continue;   // a failed download: skip, keep the order of the rest
+            }
+            try {
+                window.__loadedScripts.add(urls[index]);
+                globalEval(source + "\n//# sourceURL=" + urls[index]);
+            } catch (error) {
+                console.error('AppBootstrap - error executing script ' + urls[index], error);
+            }
+        }
     }
 
     static _fetchScriptText(url) {
