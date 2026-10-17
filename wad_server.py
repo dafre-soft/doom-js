@@ -34,6 +34,7 @@ import ssl
 import struct
 import sys
 import urllib.request
+from urllib.parse import unquote, parse_qs
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8090
@@ -164,12 +165,55 @@ class WadHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        # /wad/<file> — alias: serve a WAD from the root by file NAME only,
+        # so URLs like http://127.0.0.1:8090/wad/DOOM.WAD work no matter how
+        # deep the file sits inside the scanned folder tree.
+        if path.startswith("/wad/"):
+            name = os.path.basename(unquote(path[len("/wad/"):]))
+            target = None
+            for dirpath, _dirnames, filenames in os.walk(self.root):
+                for fn in filenames:
+                    if fn.lower() == name.lower():
+                        target = os.path.join(dirpath, fn)
+                        break
+                if target:
+                    break
+            if target is None:
+                self.send_error(404, "no such wad: %s" % name)
+                return
+            with open(target, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/wads":
             data = scan_dir(self.root)
             body = json.dumps({"root": os.path.abspath(self.root), "wads": data},
                               ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/api/launch":
+            # Ready-to-paste JS commands for the browser console.
+            q = parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            port = self.server.server_address[1]
+            good = [w for w in scan_dir(self.root) if w["ok"]]
+            lines = []
+            for w in good:
+                lvl = (w["levels"][0] if w["levels"] else "E1M1")
+                lines.append("await doomApi.launch({wadId: '%s', levelCode: '%s', maxSpeed: true});"
+                             % (w["name"].lower(), lvl))
+            body = ("// python wad_server.py | root: %s | wads: %d\n"
+                    "// Paste into the browser console (after Ctrl+F5):\n%s\n"
+                    % (os.path.abspath(self.root), len(good), "\n".join(lines))).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

@@ -871,10 +871,12 @@ class DoomJsApi {
         }
 
         throw new Error('doomApi.launch: no WAD for "' + wanted + '". Browsers forbid reading file:// links from an http page, so a local DOOM.WAD cannot be fetched by path. Working options:'
-            + '\n  1) copy the .wad next to the site and launch({url: "/wads/DOOM.WAD"}) or launch({wadId: "doom"}) — names fall back to /wads/<name>.wad;'
-            + '\n  2) await doomApi.pickAndLaunch({levelCode: "E1M1"}) — opens the native file dialog once, then starts the game;'
-            + '\n  3) host it over CORS-enabled http(s): addWad("dum", "https://…/DOOM.WAD") and launch({wadId: "dum"});'
-            + '\nKnown names: ' + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
+            + '\n  1) start the helper server in the WAD folder:  python wad_server.py --dir C:/users/daf/downloads/base'
+            + '   — doomApi auto-registers everything it serves (open http://127.0.0.1:8090/api/launch for ready commands);'
+            + '\n  2) copy the .wad next to the site and launch({url: "/wads/DOOM.WAD"}) or launch({wadId: "doom"}) — names fall back to /wads/<name>.wad;'
+            + '\n  3) await doomApi.pickAndLaunch({levelCode: "E1M1"}) — opens the native file dialog once, then starts the game;'
+            + '\n  4) host it over CORS-enabled http(s): addWad("dum", "https://…/DOOM.WAD") and launch({wadId: "dum"});'
+            + '\nKnown names now: ' + Object.keys(DoomJsApi.BUILT_IN_WADS).join(', '));
     }
 
     /**
@@ -948,12 +950,17 @@ class DoomJsApi {
                 continue;
             }
             const key = String(entry.name).toLowerCase();
+            // Register BOTH spellings: the plain file name ('duom') and a
+            // server-prefixed alias ('srv-duom') so a launch({wadId}) never
+            // collides with the built-in names (doom/heretic/…) it shadows.
+            const alias = 'srv-' + key;
             DoomJsApi.BUILT_IN_WADS[key] = {
-                urls: [base + encodeURI(entry.file)],
+                urls: [base + encodeURI(entry.file), base + '/wad/' + encodeURIComponent(entry.fileName)],
                 name: entry.fileName,
                 profile: entry.profile ?? null,
                 levels: entry.levels ?? []
             };
+            DoomJsApi.BUILT_IN_WADS[alias] = DoomJsApi.BUILT_IN_WADS[key];
             registered.push(entry.name);
         }
         console.info('doomApi.addWadFromServer: registered ' + registered.length
@@ -1180,10 +1187,9 @@ class DoomJsApi {
     }
 }
 
-// The singleton every script reaches. window.doomApi is a placeholder Proxy
-// installed by index.html before the boot; once this file is in, the proxy
-// forwards to the real object through window.realDoomApi — and window.doomApi
-// itself, for any code (or console) that reads it directly.
+// The singleton every script reaches. This file is loaded SYNCHRONOUSLY from
+// index.html, before the app's ~300 boot scripts — so window.doomApi exists as
+// a REAL object from the first millisecond (no Proxy stubs that miss methods).
 const doomApi = new DoomJsApi();
 window.realDoomApi = doomApi;
 window.doomApi     = doomApi;
@@ -1212,12 +1218,19 @@ if ((window._earlyMenuGame !== undefined) && (window._earlyMenuGame !== null)) {
     window._earlyMenuGame = null;
 }
 
-// The app is up: main.js's ready callback ran before this last script started.
-doomApi._booted = true;
+// _booted stays false until the app's scripts landed; main.js's ready
+// callback (which runs after the last batch executed) flips it via
+// markBooted(), so waitReady()/launch() keep their meaning.
+doomApi._booted = false;
+DoomJsApi.prototype.markBooted = function () {
+    this._booted = true;
+
+    return this;
+};
+window.doomApiMarkBooted = () => doomApi.markBooted();
 
 // Convenience aliases so every spelling works from the console:
 // doomApi.launch({wad: 'doom'}), {name: ...}, {url: ...}, {path: ...} all resolve.
-DoomJsApi.prototype.addWad = DoomJsApi.prototype.addWad;
 window.doomApiAddWad = (name, url, profileCode) => doomApi.addWad(name, url, profileCode);
 
 // Auto-discovery of a local wad_server.py: if it answers, every WAD it serves
