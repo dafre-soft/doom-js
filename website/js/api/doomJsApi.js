@@ -140,7 +140,7 @@ class DoomJsApi {
             const ProfileCtor = (typeof DefaultGameProfile === 'function') ? DefaultGameProfile : window.DefaultGameProfile;
             profile = new ProfileCtor();
         }
-        let levelCode = options.levelCode;
+        let levelCode = this._ensureLevelCode(wadFile, options.levelCode);
         if ((levelCode === undefined) || (levelCode === null)) {
             const names = wadFile.getLevelNames();
             if (names.length === 0) {
@@ -781,21 +781,20 @@ class DoomJsApi {
             };
         }
 
-        // 2. A link to the .wad file — http(s) or a site-local '/wads/x.wad'.
-        // file:// links are impossible from an http page (the browser blocks
-        // them); use pickAndLaunch() or copy the file next to the site instead.
-        // Every spelling of the option is accepted: wadUrl / url / path / src.
-        const url = options.wadUrl ?? options.url ?? options.path ?? options.src;
+        // 2. A link to the .wad file — http(s), a site-local '/wads/x.wad', or a
+        // local disk path (file:///C:/…, C:\…, \\srv\share\…). Browsers cannot
+        // read local paths directly, so a local path is transparently remapped
+        // onto candidate URLs where the same file usually already is:
+        //   /wads/<name>.wad on THIS site, and http://127.0.0.1:<port>/<name>.wad
+        // on the side-servers started with `python -m http.server` (8090, 8000).
+        // One of those three works without any code change in the browser.
+        const url = options.wadUrl ?? options.url ?? options.path ?? options.src ?? options.wadPath;
         if ((url !== undefined) && (url !== null)) {
             const wanted = DoomJsApi._profileCodeOption(options);
-            if (String(url).toLowerCase().startsWith('file://')) {
-                throw new Error('doomApi.launch: browsers forbid reading "' + url + '" from an http page.'
-                    + ' Copy the .wad next to the site and pass {url: "/wads/DOOM.WAD"}, or call await doomApi.pickAndLaunch({levelCode: "E1M1"})'
-                    + ' which opens the native file dialog once.');
-            }
+            const candidates = DoomJsApi._candidatesFor(url);
 
             return {
-                wadFile: await DoomJsApi._fetchFirstAvailable([url]),
+                wadFile: await DoomJsApi._fetchFirstAvailable(candidates),
                 meta:    {id: wanted ?? 'url', name: DoomJsApi._fileNameOf(url)},
                 profileCode: wanted
             };
@@ -812,9 +811,10 @@ class DoomJsApi {
             };
         }
 
-        // 3. Named editions load straight from a link — no profiles registry,
-        // no IndexedDB: fetch the .wad and parse it (BUILT_IN_WADS table,
-        // editable at runtime with doomApi.addWad(name, url, profileCode)).
+        // 3. Named editions: the table BUILT_IN_WADS (editable at runtime with
+        // doomApi.addWad(name, url, profileCode)). An unknown name is looked up
+        // as '/wads/<name>.wad' first — and if that exists it IS the wanted WAD,
+        // so its profile is sniffed from the bytes instead of guessing 'doom'.
         const wanted = String(options.wadId ?? options.wad ?? options.name ?? '').toLowerCase();
         const builtIn = DoomJsApi.BUILT_IN_WADS[wanted];
         if ((builtIn !== undefined) && (builtIn !== null)) {
@@ -825,16 +825,25 @@ class DoomJsApi {
             };
         }
 
-        // 4. Unknown short name: try '/wads/<name>.wad' served next to the site.
+        // 4. Unknown short name: try every casing of '/wads/<name>.wad' served
+        // next to the site (Windows copies keep names like DOOM.WAD).
         if ((wanted.length > 0) && /^[a-z0-9_\-]+$/i.test(wanted)) {
+            const probes = ['/wads/' + wanted + '.wad', '/wads/' + wanted.toUpperCase() + '.WAD'];
             try {
+                const wadFile = await DoomJsApi._fetchFirstAvailable(probes);
+
                 return {
-                    wadFile: await DoomJsApi._fetchFirstAvailable(['/wads/' + wanted + '.wad']),
+                    wadFile: wadFile,
                     meta:    {id: wanted, name: wanted + '.wad'},
+                    // The real game (doom / heretic / a mod…) from the WAD itself;
+                    // getForWad falls back to the plain doom-format profile for
+                    // unknown WADs, so this also covers custom PWAD-style files.
                     profileCode: DoomJsApi._profileCodeOption(options)
+                        ?? DoomJsApi.sniffProfileCode(wadFile)
+                        ?? null
                 };
             } catch (error) {
-                console.warn('doomApi.launch: /wads/' + wanted + '.wad not available', error);
+                console.warn('doomApi.launch: none of ' + probes.join(', ') + ' is available', error);
             }
         }
 
@@ -877,16 +886,94 @@ class DoomJsApi {
         if (key.length === 0) {
             throw new Error('doomApi.addWad: missing name');
         }
-        const raw = String(opts.url ?? opts.path ?? '');
+        let raw = String(opts.url ?? opts.path ?? '');
         if (raw.length === 0) {
             throw new Error('doomApi.addWad: missing url for "' + key + '"');
         }
+        // A Windows path or file:// link is remapped onto the places the browser
+        // CAN read it from: /wads/<file> on this site and the localhost side
+        // servers (`python -m http.server` in that folder). Copy the .wad into
+        // website/wads/ OR start the side server — launch({wadId: name}) then works.
+        if (DoomJsApi._isLocalPath(raw)) {
+            const fileName = DoomJsApi._fileNameOf(raw);
+            console.warn('doomApi.addWad: browsers cannot read local files ("' + raw + '").'
+                + ' Either copy "' + fileName + '" into website/wads/, or run'
+                + ' "python -m http.server 8090" inside its folder — launch({wadId: "' + key + '"})'
+                + ' will find it automatically.');
+            raw = '/wads/' + fileName;
+        }
 
         DoomJsApi.BUILT_IN_WADS[key] = {
+            local: raw.startsWith('/') ? raw : undefined,
             urls: [raw], name: DoomJsApi._fileNameOf(raw), profile: (opts.profileCode ?? opts.profile ?? null)
         };
 
         return this;
+    }
+
+    /**
+     * The game engine refuses to start a level whose code is not in the WAD.
+     * For a console launch this is pure friction — 'E1M1' on a MAP-structured
+     * WAD (or vice versa) is almost always just a naming slip. Remap it onto
+     * the closest existing level instead of throwing:
+     *   E1M1 <-> MAP01 by number; otherwise the first level of the WAD.
+     */
+    _ensureLevelCode(wadFile, levelCode) {
+        const names = wadFile.getLevelNames();
+        if ((levelCode === undefined) || (levelCode === null) || names.includes(levelCode)) {
+            return levelCode;
+        }
+
+        const wanted = String(levelCode).toUpperCase();
+        const digits = wanted.match(/\d+/g);
+        const guess  = names.find((name) => {
+            const mine = name.toUpperCase().match(/\d+/g);
+
+            return (mine !== null) && (digits !== null)
+                && (mine[mine.length - 1] === digits[digits.length - 1]);
+        });
+        const fixed = guess ?? names[0];
+        console.warn('doomApi.launch: level "' + wanted + '" is not in this WAD ('
+            + names.join(', ') + ') — starting "' + fixed + '" instead.');
+
+        return fixed;
+    }
+
+    /** True for file:// links and bare local paths like C:/dir/game.wad or \\srv\share\game.wad. */
+    static _isLocalPath(url) {
+        const s = String(url).trim().toLowerCase();
+
+        return s.startsWith('file:') || /^[a-z]:[\\/]/.test(s) || s.startsWith('\\\\') || s.startsWith('\\');
+    }
+
+    /** Ports where a `python -m http.server` next to the WAD folder is usually started. */
+    static LOCAL_SERVER_PORTS = [8090, 8000, 8080];
+
+    /**
+     * Turn any url/path into the ordered list of places to actually fetch from.
+     *  - http(s)/site-local path  -> used as-is;
+     *  - a local disk path (file:///C:/…, C:\…) cannot be read by the browser,
+     *    so it is remapped onto '/wads/<file>' on this site plus the same file
+     *    on the localhost side-servers (python -m http.server in that folder).
+     * @returns {string[]}
+     */
+    static _candidatesFor(url) {
+        const raw = String(url).trim();
+        if (!DoomJsApi._isLocalPath(raw)) {
+            return [raw];
+        }
+
+        const fileName = DoomJsApi._fileNameOf(raw);
+        const encoded  = encodeURIComponent(fileName);
+        const out      = ['/wads/' + encoded];
+        for (const port of DoomJsApi.LOCAL_SERVER_PORTS) {
+            out.push('http://127.0.0.1:' + port + '/' + encoded);
+        }
+        console.warn('doomApi: browsers cannot open "' + raw + '" directly — trying instead: '
+            + out.join(', ') + '. If none answers, either copy the .wad into website/wads/,'
+            + ' or run "python -m http.server 8090" inside its folder, or use doomApi.pickAndLaunch().');
+
+        return out;
     }
 
     /** All download candidates of a table entry: explicit URLs plus the CDN mirrors of each repo reference. */
@@ -908,18 +995,29 @@ class DoomJsApi {
         return out;
     }
 
-    /** Fetch every candidate in order until one parses as a WAD. */
+    /** Fetch every candidate in PARALLEL — the first answer that parses as a
+     * WAD wins (a dead localhost port fails in milliseconds, so the slowest
+     * mirror never decides how long the launch takes). */
     static async _fetchFirstAvailable(urls) {
-        let lastError = null;
-        for (const url of urls) {
-            try {
-                return await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
-            } catch (error) {
-                lastError = error;
-                console.warn('doomApi: ' + url + ' failed:', error.message ?? error);
+        const attempts = urls.map(async (url) => {
+            const wadFile = await new (window.WadFile)(await DoomJsApi._fetchBuffer(url)).parse();
+
+            return {url: url, wadFile: wadFile};
+        });
+        // Log each failure as it happens, without ever rejecting unhandled.
+        attempts.forEach((attempt, i) => {
+            attempt.catch((error) => console.warn('doomApi: ' + urls[i] + ' failed:', error.message ?? error));
+        });
+
+        const winner = await Promise.any(attempts).catch(() => null);
+        if (winner !== null) {
+            if (winner.url !== urls[0]) {
+                console.info('doomApi: loaded the WAD from "' + winner.url + '"');
             }
+
+            return winner.wadFile;
         }
-        throw new Error('doomApi.launch: could not download the WAD from any mirror (' + urls.join(', ') + ')', {cause: lastError});
+        throw new Error('doomApi.launch: could not download the WAD from any source (' + urls.join(', ') + ')');
     }
 
     static async _fetchBuffer(url) {
