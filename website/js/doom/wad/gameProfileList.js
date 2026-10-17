@@ -15,10 +15,13 @@
 // to crash with "is not defined" / "can't access lexical declaration … before
 // initialization": the bootstrap loads the scripts in parallel batches, so any
 // file can be evaluated before its dependencies finished parsing.
-GameProfileList.__instance = null;
-GameProfileList.__cache    = null;
-
+// The statics are assigned INSIDE the class body: a top-level `class X` is a
+// lexical (let-like) binding, so touching `GameProfileList.foo` before the
+// declaration line ran would hit the temporal dead zone.
 class GameProfileList {
+    static __instance = null;
+    static __cache    = null;
+
     constructor() {
         if ((GameProfileList.__instance !== null) && (GameProfileList.__instance !== undefined)) {
             return GameProfileList.__instance;

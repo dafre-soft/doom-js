@@ -137,21 +137,26 @@ class AppBootstrap {
      * global scope with an indirect eval — synchronous, in-order execution, so
      * no file ever evaluates before its dependencies. Indirect eval keeps the
      * code in the GLOBAL scope: top-level 'class'/'let' declarations behave
-     * exactly like classic script tags (no redeclaration errors when the same
-     * file is evaluated again after a soft reload).
+     * exactly like classic script tags.
+     *
+     * Idempotence: a page reload that keeps the JS context (PWA update flow,
+     * soft reload) would re-evaluate every class and die on "redeclaration of
+     * let/class" — remember what already ran. The guard is a plain property on
+     * window: bare identifiers inside the eval'd scripts resolve through the
+     * real global lexical scope, which does NOT see properties added via
+     * `window.x` when a same-realm binding shadows them — so it is read and
+     * written directly here, never from inside an injected script.
      */
     static async loadScriptsInOrder(urls) {
         const sources  = await Promise.all(urls.map((url) => AppBootstrap._fetchScriptText(url)));
         const globalEval = eval;
 
-        // A page reload that keeps the JS context (PWA update flow, dev tools
-        // "disable cache" soft reload) would re-evaluate every class and die
-        // on "redeclaration of let/class" — remember what already ran.
-        window.__loadedScripts ??= new Set();
+        window.__doomLoadedScripts ??= new Set();
+        const loaded = window.__doomLoadedScripts;
 
         for (let index = 0; index < sources.length; index++) {
             const source = sources[index];
-            if (window.__loadedScripts.has(urls[index])) {
+            if (loaded.has(urls[index])) {
                 continue;   // already evaluated in this JS context
             }
             if (source === null) {
@@ -159,7 +164,7 @@ class AppBootstrap {
                 continue;   // a failed download: skip, keep the order of the rest
             }
             try {
-                window.__loadedScripts.add(urls[index]);
+                loaded.add(urls[index]);
                 globalEval(source + "\n//# sourceURL=" + urls[index]);
             } catch (error) {
                 console.error('AppBootstrap - error executing script ' + urls[index], error);
