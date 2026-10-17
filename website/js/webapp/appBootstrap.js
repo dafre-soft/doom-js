@@ -113,6 +113,8 @@ class AppBootstrap {
      * and defer keeps their execution order.
      */
     static JS_BATCH_SIZE = 64;
+    static _scriptTextCache = new Map();     // url -> source text (from prefetch)
+    static _scriptPrefetches = new Map();    // url -> in-flight download promise
 
     /**
      * Script tags appended after parsing started execute immediately (the
@@ -154,9 +156,10 @@ class AppBootstrap {
         const loaded = window.__doomLoadedScripts;
 
         // Fire every download now — they race in parallel while we execute.
+        const prefetches = [];
         for (const url of urls) {
             if (!loaded.has(url)) {
-                AppBootstrap._prefetchScript(url);
+                prefetches.push(AppBootstrap._prefetchScript(url));
             }
         }
 
@@ -164,9 +167,24 @@ class AppBootstrap {
             if (loaded.has(url)) {
                 continue;       // already executed in this JS context
             }
+            // Make sure this file's text is in the cache so _publishGlobals can
+            // run SYNCHRONOUSLY right after it executes (otherwise a subclass
+            // appended one microtask later may not see window.BaseClass yet).
+            let cached = AppBootstrap._scriptTextCache.get(url);
+            if (cached === undefined) {
+                await Promise.race([
+                    Promise.all(prefetches).catch(() => {}),
+                    new Promise((resolve) => setTimeout(resolve, 1500)),
+                ]);
+                cached = AppBootstrap._scriptTextCache.get(url);
+            }
             await AppBootstrap._appendScriptTag(url);
             loaded.add(url);
             AppBootstrap._publishGlobals(url);
+        }
+        // Free the text cache once everything ran (keep memory bounded).
+        if (AppBootstrap._scriptTextCache.size > 400) {
+            AppBootstrap._scriptTextCache.clear();
         }
     }
 
@@ -184,26 +202,36 @@ class AppBootstrap {
             if (!(url.endsWith('.js') || url.includes('.js?'))) {
                 return;
             }
+            const publish = (source) => {
+                if (!source) {
+                    return;
+                }
+                const pattern = /^(?:class|const|let)\s+([A-Za-z_$][\w$]*)/gm;
+                let match;
+                while ((match = pattern.exec(source)) !== null) {
+                    const name = match[1];
+                    if (Object.prototype.hasOwnProperty.call(window, name)) {
+                        continue;   // already a real window property
+                    }
+                    try {
+                        window[name] = eval(name);
+                    } catch (error) {
+                        // TDZ / not accessible from here — harmless, skip.
+                    }
+                }
+            };
+            // Prefer the copy we already downloaded during prefetch — publishing
+            // synchronously guarantees window.Foo exists BEFORE the next file in
+            // the list runs (an async fetch could land too late and subclasses
+            // would die with "class heritage window.X is not an object or null").
+            const cached = AppBootstrap._scriptTextCache.get(url);
+            if (cached !== undefined) {
+                publish(cached);
+                return;
+            }
             fetch(url, {credentials: 'same-origin'})
                 .then((response) => response.ok ? response.text() : '')
-                .then((source) => {
-                    if (!source) {
-                        return;
-                    }
-                    const pattern = /^(?:class|const|let)\s+([A-Za-z_$][\w$]*)/gm;
-                    let match;
-                    while ((match = pattern.exec(source)) !== null) {
-                        const name = match[1];
-                        if (Object.prototype.hasOwnProperty.call(window, name)) {
-                            continue;   // already a real window property
-                        }
-                        try {
-                            window[name] = eval(name);
-                        } catch (error) {
-                            // TDZ / not accessible from here — harmless, skip.
-                        }
-                    }
-                })
+                .then(publish)
                 .catch(() => {});
         } catch (error) {
             // Never let the bridge break the boot.
@@ -211,10 +239,22 @@ class AppBootstrap {
     }
 
     static _prefetchScript(url) {
-        // Best effort: prime the HTTP cache so the <script src> tag lands instantly.
+        // Download the text once and keep it: (a) primes the HTTP cache so the
+        // <script src> tag lands instantly, (b) gives _publishGlobals a local
+        // copy to scan synchronously right after the script executes.
         try {
-            fetch(url, {credentials: 'same-origin'}).catch(() => {});
+            const promise = fetch(url, {credentials: 'same-origin'})
+                .then((response) => response.ok ? response.text() : '')
+                .then((text) => {
+                    if (text) {
+                        AppBootstrap._scriptTextCache.set(url, text);
+                    }
+                })
+                .catch(() => {});
+            AppBootstrap._scriptPrefetches.set(url, promise);
+            return promise;
         } catch (error) {
+            return Promise.resolve();
         }
     }
 
