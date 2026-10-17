@@ -8,7 +8,12 @@ doom_ai_stream.py — отдельная херня с ИИшкой, панел�
   1) поднимается ПАНЕЛЬ УПРАВЛЕНИЯ + ТРАНСЛЯЦИЯ на http://localhost:8090
      (stdlib http.server, без flask; MultipartJet-стрим кадров, JSON-API,
       живые метрики, чат с ИИшкой, управление игрой)
-  2) затем стартует игровой сервер (сайт spipu-doom + /api/wads), по умолчанию :8124
+  2) затем стартует игровой сервер (сайт spipu-doom + /api/wads), по умолчанию :8123
+  2b) отдельный СЫРОЙ КАМЕРЫ сервер на http://localhost:8125 — только картинка
+      DOOMa без всякого UI панели: /            — одна страница <img>,
+      /raw.jpg        — свежий JPEG-кадр (можно тыкать в VLC/ffmpeg/OBS),
+      /raw.mjpg       — multipart/x-mixed-replace видеопоток,
+      /frame.png      — PNG-версия кадра
   3) Playwright Chromium открывает сайт и дёргает window.doomApi
      (waitReady / launch / getView / setMove / setInput / screenshot / draw)
   4) ИИШКА: нейросеть-политика (numpy MLP, ReLU, softmax над действиями).
@@ -26,8 +31,8 @@ doom_ai_stream.py — отдельная херня с ИИшкой, панел�
     pip install playwright numpy && python -m playwright install chromium
 
 Запуск:
-    python doom_ai_stream.py                 # панель+стрим :8090, игра :8124
-    python doom_ai_stream.py --port 8090 --game-port 8124 --wad freedoom1 --level E1M1
+    python doom_ai_stream.py                 # панель :8090, игра :8123, сырая камера :8125
+    python doom_ai_stream.py --port 8090 --game-port 8123 --raw-port 8125 --wad freedoom1 --level E1M1
     python doom_ai_stream.py --no-browser    # только панель, браузер вручную
 """
 
@@ -109,9 +114,12 @@ STATE_DIR  = os.path.join(HERE, ".ai_stream_state")
 BRAIN_PATH = os.path.join(STATE_DIR, "brains.json.gz")
 
 STREAM_HOST = os.environ.get("AI_STREAM_HOST", "0.0.0.0")
-STREAM_PORT = 8090
+STREAM_PORT = 8090          # панель управления + трансляция
 GAME_HOST   = "127.0.0.1"
-GAME_PORT   = 8124
+GAME_PORT   = 8123          # игровой сервер (сайт spipu-doom)
+RAW_HOST    = os.environ.get("AI_RAW_HOST", "0.0.0.0")
+RAW_PORT    = 8125          # сырая камера DOOMa (без UI панели)
+_raw_httpd  = None          # экземпляр сервера сырой камеры (для рестарта на др. порту)
 
 ACTIONS = ["idle", "forward", "back", "strafe_left", "strafe_right",
            "turn_left", "turn_right", "run", "use", "attack"]
@@ -583,6 +591,34 @@ MARK_JS = """
 }
 """
 
+# снимает СЫРОЙ кадр прямо с canvas'а DOOMa (тот же буфер, что рисует игра,
+# но без оверлея целей и без UI панели)
+RAW_FRAME_JS = """
+(o) => {
+  try {
+    const sel = ['canvas#doom-canvas', 'canvas#game', '#doom-game canvas',
+                 '.doom-canvas', '#app canvas', 'canvas'];
+    let cv = null;
+    for (const s of sel) { try { cv = document.querySelector(s); if (cv) break; } catch (e) {} }
+    if (!cv) {
+      const all = Array.from(document.querySelectorAll('canvas'));
+      all.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+      cv = all[0] || null;
+    }
+    if (!cv || !cv.width || !cv.height) return null;
+    const scale = Math.min(1, (o.w || 1280) / cv.width);
+    const tmp = document.createElement('canvas');
+    tmp.width  = Math.max(1, Math.round(cv.width * scale));
+    tmp.height = Math.max(1, Math.round(cv.height * scale));
+    const ctx = tmp.getContext('2d');
+    ctx.imageSmoothingEnabled = false;   // пиксель-арт как есть
+    ctx.drawImage(cv, 0, 0, tmp.width, tmp.height);
+    const mime = (o.mime === 'image/png') ? 'image/png' : 'image/jpeg';
+    return tmp.toDataURL(mime, o.q || 0.8);
+  } catch (e) { return null; }
+}
+"""
+
 
 class Browser:
     def __init__(self, state):
@@ -591,8 +627,10 @@ class Browser:
         self.browser = None
         self.page = None
         self.lock = threading.Lock()
-        self.frame_jpeg = None
+        self.frame_jpeg = None          # кадр с оверлеем целей (для панели)
         self.frame_ts = 0.0
+        self.raw_jpeg = None            # СЫРОЙ кадр canvas'а DOOMa без UI панели
+        self.raw_ts = 0.0
         self.view_data = None
         self.stream_enabled = True
 
@@ -602,6 +640,10 @@ class Browser:
             return True
         except Exception:
             return False
+
+    def page_ready(self):
+        with self.lock:
+            return self.page is not None
 
     def open_site(self, url, headless=True):
         from playwright.sync_api import sync_playwright
@@ -706,6 +748,62 @@ class Browser:
         except Exception:
             pass
 
+    def grab_raw_frame(self, quality=0.8, max_width=1280, min_interval=0.05):
+        """Снимает СЫРОЙ кадр прямо с canvas'а DOOMa (без оверлеев панели/целей)."""
+        now = time.time()
+        if now - self.raw_ts < min_interval:
+            return
+        with self.lock:
+            if self.page is None:
+                return
+            try:
+                data_url = self.page.evaluate(RAW_FRAME_JS, {"q": quality, "w": max_width})
+            except Exception:
+                return
+        if not data_url or not isinstance(data_url, str) or "," not in data_url:
+            return
+        try:
+            self.raw_jpeg = base64.b64decode(data_url.split(",", 1)[1])
+            self.raw_ts = time.time()
+        except Exception:
+            pass
+
+    def grab_png_frame(self, max_width=1280):
+        """PNG-версия сырого кадра (для /frame.png на сервере камеры)."""
+        with self.lock:
+            if self.page is None:
+                return None
+            try:
+                data_url = self.page.evaluate(RAW_FRAME_JS, {"mime": "image/png",
+                                                             "w": max_width})
+            except Exception:
+                return None
+        if not data_url or not isinstance(data_url, str) or "," not in data_url:
+            return None
+        try:
+            return base64.b64decode(data_url.split(",", 1)[1])
+        except Exception:
+            return None
+
+    def ensure_rawcam_loop(self):
+        """Фоновый захват сырых кадров — работает даже когда ИИшка на паузе/не запущена."""
+        if getattr(self, "_rawcam_thread", None):
+            return
+        st = self.state
+
+        def loop():
+            while True:
+                try:
+                    if st.rawcam_on and self.page_ready():
+                        self.grab_raw_frame()
+                except Exception:
+                    pass
+                time.sleep(0.06)
+
+        t = threading.Thread(target=loop, daemon=True)
+        t.start()
+        self._rawcam_thread = t
+
     def stop_all(self):
         with self.lock:
             if self.page is not None:
@@ -748,6 +846,7 @@ class Agent(threading.Thread):
         self.action_log = deque(maxlen=120)
         self.episode_fitnesses = []
         self.chat = []             # история чата с ИИшкой
+        self.rawcam_on = False     # включать ли захват сырого кадра для :8125
         self.pop = Population(FEATURE_COUNT, size=int(os.environ.get("AI_POP", "12")))
         self.stats["generation"] = self.pop.generation
         self._lock = threading.Lock()
@@ -911,6 +1010,8 @@ class Agent(threading.Thread):
             self.action_log.appendleft("%s · %s · hp=%s" % (
                 self.stats["lastAction"]["at"], action_name, int(raw["health"])))
             br.grab_frame()
+            if self.rawcam_on:
+                br.grab_raw_frame()
 
             reward = float(rw.get("time", -0.01))
             if prev_raw is not None:
@@ -1039,6 +1140,8 @@ class AppState:
                       "autoSave": True, "popSize": 12},
             "reward": {"move": 0.05, "stuck": -0.03, "hurt": -0.2, "death": -20.0,
                        "survive": 0.05, "time": -0.01, "near_item": 0.02, "near_enemy": 0.01},
+            # порты: панель/трансляция, игровой сайт, сырая камера DOOMa (без UI)
+            "ports": {"panel": STREAM_PORT, "game": GAME_PORT, "raw": RAW_PORT},
         }
         self._load_cfg()
 
@@ -1069,6 +1172,184 @@ class AppState:
 
 
 STATE = AppState()
+
+
+# ----------------------------------------------------------------------------- raw camera server (:8125)
+
+RAW_PAGE_HTML = r"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>DOOM · сырая камера :8125</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#9ab;display:flex;
+             align-items:center;justify-content:center;font-family:ui-monospace,monospace}
+  img{max-width:100vw;max-height:100vh;image-rendering:pixelated;width:100%;object-fit:contain}
+  #msg{position:fixed;top:8px;left:12px;font-size:12px;opacity:.75}
+  a{color:#39c2cf;text-decoration:none}
+</style></head>
+<body>
+  <div id="msg">кадра нет — ждём игру… (<a href="/raw.jpg">/raw.jpg</a> · <a href="/raw.mjpg">/raw.mjpg</a>)</div>
+  <img id="cam" alt="">
+<script>
+const img=document.getElementById('cam'), msg=document.getElementById('msg');
+let last=0, alive=false;
+async function loop(){
+  try{
+    const r=await fetch('/api/rawinfo?ts='+Date.now());
+    const j=await r.json();
+    if(j.ts && j.ts!==last){ last=j.ts; img.src='/raw.jpg?t='+j.ts; }
+    alive = !!j.ts && (Date.now()/1000 - j.ts) < 10;
+    msg.textContent = alive ? ('raw '+(j.width||'?')+'x'+(j.height||'?')+' · '+(j.fps||'—')+' fps')
+                             : 'кадра нет — ждём игру…';
+  }catch(e){ msg.textContent='сервер недоступен'; }
+  setTimeout(loop, 120);
+}
+loop();
+</script>
+</body></html>
+"""
+
+
+class RawHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    state = None
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def do_GET(self):
+        st = self.state
+        br = st.browser
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            self._send(200, "text/html; charset=utf-8", RAW_PAGE_HTML.encode("utf-8"))
+        elif path == "/raw.jpg":
+            jpeg = br.raw_jpeg or br.frame_jpeg
+            if jpeg:
+                self._send(200, "image/jpeg", jpeg)
+            else:
+                self._send(404, "text/plain; charset=utf-8", b"no frame yet")
+        elif path == "/frame.png":
+            png = None
+            try:
+                png = br.grab_png_frame()
+            except Exception:
+                png = None
+            if png:
+                self._send(200, "image/png", png)
+            else:
+                self._send(404, "text/plain; charset=utf-8", b"no frame yet")
+        elif path == "/raw.mjpg":
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "multipart/x-mixed-replace; boundary=rawframe")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            jet = Jet(b"--rawframe")
+            last_ts = 0.0
+            try:
+                while True:
+                    jpeg = br.raw_jpeg or br.frame_jpeg
+                    ts = br.raw_ts or br.frame_ts
+                    if jpeg and ts != last_ts:
+                        self.wfile.write(jet.multipart(jpeg))
+                        self.wfile.flush()
+                        last_ts = ts
+                    else:
+                        time.sleep(0.05)
+            except Exception:
+                pass
+        elif path == "/api/rawinfo":
+            jpeg = br.raw_jpeg or br.frame_jpeg
+            ts = (br.raw_ts if br.raw_jpeg else br.frame_ts) or 0.0
+            w = h = 0
+            if jpeg:
+                i = 2
+                try:
+                    while i < len(jpeg) - 9:
+                        if jpeg[i] != 0xFF:
+                            i += 1
+                            continue
+                        m = jpeg[i + 1]
+                        if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+                            i += 2
+                            continue
+                        ln = int.from_bytes(jpeg[i + 2:i + 4], "big")
+                        if m in (0xC0, 0xC1, 0xC2, 0xC3):
+                            h = int.from_bytes(jpeg[i + 5:i + 7], "big")
+                            w = int.from_bytes(jpeg[i + 7:i + 9], "big")
+                            break
+                        i += 2 + ln
+                except Exception:
+                    pass
+            ag = st.agent
+            fps = round(1.0 / max(0.001, float(st.cfg["agent"].get("stepDelay", 0.05))), 1)
+            self._send(200, "application/json", json.dumps({
+                "ok": True, "ts": ts, "width": w, "height": h, "bytes": len(jpeg or b""),
+                "fps": fps, "agentRunning": bool(ag and ag.stats.get("status") == "running"),
+            }).encode("utf-8"))
+        else:
+            self._send(404, "text/plain; charset=utf-8", b"not found")
+
+
+def start_raw_server(port=None, host=None):
+    """Сервер СЫРОЙ КАМЕРЫ игрока: картинка DOOMa без всякого UI панели."""
+    global RAW_PORT, _raw_httpd
+    p = int(port or STATE.cfg.get("ports", {}).get("raw") or RAW_PORT)
+    h = host or RAW_HOST
+    RawHandler.state = STATE
+    if _raw_httpd is not None and RAW_PORT == p:
+        STATE.rawcam_on = True
+        STATE.browser.ensure_rawcam_loop()
+        return _raw_httpd          # уже крутится на этом порту
+    try:
+        httpd = ThreadingHTTPServer((h, p), RawHandler)
+    except OSError as e:
+        STATE.log("сырая камера: порт %d занят (%s)" % (p, e))
+        return None
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    if _raw_httpd is not None and _raw_httpd is not httpd:
+        try:
+            _raw_httpd.shutdown()
+            _raw_httpd.server_close()
+        except Exception:
+            pass
+    _raw_httpd = httpd
+    RAW_PORT = p
+    STATE.cfg.setdefault("ports", {})["raw"] = p
+    STATE.save_cfg()
+    STATE.rawcam_on = True   # агент начинает захватывать сырые кадры для этого порта
+    STATE.browser.ensure_rawcam_loop()   # фоновый захват (не зависит от ИИшки)
+    STATE.log("СЫРАЯ КАМЕРА DOOMa: http://localhost:%d/raw.mjpg "
+              "(статичный кадр: /raw.jpg, PNG: /frame.png)" % p)
+    return httpd
+
+
+def stop_raw_server():
+    global _raw_httpd
+    STATE.rawcam_on = False
+    if _raw_httpd is not None:
+        try:
+            _raw_httpd.shutdown()
+            _raw_httpd.server_close()
+        except Exception:
+            pass
+        _raw_httpd = None
+        STATE.log("сырая камера остановлена")
+    return {"ok": True}
 
 
 # ----------------------------------------------------------------------------- multipart stream
@@ -1153,6 +1434,8 @@ class StreamHandler(BaseHTTPRequestHandler):
             self._json({
                 "server": {"streamPort": STREAM_PORT, "gamePort": st.game_server.port,
                            "gameUrl": "http://%s:%d/" % (GAME_HOST, st.game_server.port),
+                           "rawPort": RAW_PORT, "rawUrl": "http://localhost:%d/" % RAW_PORT,
+                           "rawMjpg": "http://localhost:%d/raw.mjpg" % RAW_PORT,
                            "browserReady": st.browser.available()},
                 "config": st.cfg,
                 "agent": (dict(ag.stats) if ag else {"status": "idle"}),
@@ -1225,6 +1508,11 @@ class StreamHandler(BaseHTTPRequestHandler):
             self._json(st.game_server.start(body.get("port")))
         elif path == "/api/game-server/stop":
             self._json(st.game_server.stop())
+        elif path == "/api/rawcam/start":
+            httpd = start_raw_server(body.get("port"))
+            self._json({"ok": httpd is not None, "rawPort": RAW_PORT})
+        elif path == "/api/rawcam/stop":
+            self._json(stop_raw_server())
         elif path == "/api/agent/start":
             if st.agent is not None and st.agent.is_alive():
                 self._json({"ok": False, "error": "агент уже запущен"})
@@ -1321,6 +1609,7 @@ canvas.mini{width:100%;height:150px;background:#0a0f16;border:1px solid var(--li
 .gauge i{display:block;height:100%;background:var(--ok)}
 footer{padding:8px 18px;color:var(--dim);font-size:11px;border-top:1px solid var(--line)}
 a{color:var(--cy)}
+input[type=checkbox]{accent-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -1343,6 +1632,13 @@ a{color:var(--cy)}
       <button id="btn-stream" class="small">⏸ заморозить стрим</button>
       <button class="small" onclick="document.getElementById('stream').src='/frame.jpg?t='+Date.now()">обновить кадр</button>
       <span class="tag" id="fps">—</span>
+      <label class="tag" style="display:flex;gap:6px;align-items:center;width:auto;margin-left:auto">
+        <input type="checkbox" id="rawcam" checked style="width:auto"> сырая камера DOOMa:
+      </label>
+      <input id="raw-port-in" type="number" value="8125" style="width:70px;padding:2px 4px;background:#0a0f16;color:#cfe;border:1px solid #234;border-radius:4px">
+      <button class="small" id="btn-rawapply">⇄ порт</button>
+      <a class="tag" id="raw-link" href="http://localhost:8125/raw.mjpg" target="_blank">🎥 /raw.mjpg</a>
+      <a class="tag" id="raw-jpg" href="http://localhost:8125/raw.jpg" target="_blank">/raw.jpg</a>
     </div>
   </div>
 
@@ -1450,7 +1746,8 @@ a{color:var(--cy)}
 </section>
 </main>
 <footer>
-  Панель+стрим: <b>:8090</b> · игра раздаётся на <b id="f-game">:8124</b> ·
+  Панель+стрим: <b>:8090</b> · игра раздаётся на <b id="f-game">:8123</b> ·
+  сырая камера DOOMa: <b><a id="f-raw" href="http://localhost:8125/" target="_blank">:8125/raw.mjpg</a></b> ·
   всё через <b>window.doomApi</b> (launch/getView/setMove/screenshot/draw) в headless Chromium
 </footer>
 <script>
@@ -1473,6 +1770,15 @@ async function refresh(){
   document.getElementById('b-gen').textContent='gen '+(br?br.generation:0);
   document.getElementById('b-fit').textContent='best '+(br&&br.bestEver!=null?br.bestEver.toFixed(1):'—');
   document.getElementById('f-game').textContent=':'+STATE.server.gamePort;
+  // сырая камера: порты и ссылки (берём хост, с которого открыта панель)
+  const rp = STATE.server.rawPort || 8125;
+  const rawBase = 'http://'+location.hostname+':'+rp;
+  const rpi = document.getElementById('raw-port-in');
+  if (rpi && document.activeElement !== rpi) rpi.value = rp;
+  document.getElementById('raw-link').href = rawBase+'/raw.mjpg';
+  document.getElementById('raw-jpg').href = rawBase+'/raw.jpg';
+  document.getElementById('f-raw').textContent = ':'+rp+'/raw.mjpg';
+  document.getElementById('f-raw').href = rawBase+'/';
   document.getElementById('hud-hp').textContent=(p.health!=null?p.health:'—');
   document.getElementById('hp-bar').style.width=Math.max(0,Math.min(100,(p.health||0)))+'%';
   document.getElementById('hud-ar').textContent=(p.armor!=null?p.armor:'—');
@@ -1572,6 +1878,19 @@ async function toggleGameServer(){
   await post(running?'/api/game-server/stop':'/api/game-server/start',{});
   refresh();
 }
+// ---------- сырая камера DOOMa (:8125 по умолчанию)
+document.getElementById('rawcam').addEventListener('change', async e=>{
+  if(e.target.checked){ const j=await post('/api/rawcam/start',{port:parseInt(document.getElementById('raw-port-in').value)||undefined}); flash(JSON.stringify(j)); }
+  else { await post('/api/rawcam/stop',{}); flash('сырая камера остановлена'); }
+  refresh();
+});
+document.getElementById('btn-rawapply').onclick = async ()=>{
+  const p=parseInt(document.getElementById('raw-port-in').value);
+  if(!p||p<1||p>65535){flash('некорректный порт');return;}
+  const j=await post('/api/rawcam/start',{port:p});
+  flash(j.ok?('сырая камера → :'+j.rawPort):('порт занят / ошибка'));
+  refresh();
+};
 function dl(name){ const b=document.getElementById('dl-'+(name.includes('2')?'f2':'f1')); b.textContent='…качаю';
   post('/api/wads/download',{fileName:name}).then(j=>{b.textContent=j.ok?('✓ '+name):('✗ '+j.error); loadWads();}); }
 async function loadWads(){
@@ -1616,18 +1935,25 @@ refresh();
 # ----------------------------------------------------------------------------- main
 
 def main():
-    global STREAM_PORT, GAME_PORT
+    global STREAM_PORT, GAME_PORT, RAW_PORT
     ap = argparse.ArgumentParser(description="DOOM AI stream + control panel")
-    ap.add_argument("--port", type=int, default=STREAM_PORT, help="панель + трансляция (default 8090)")
-    ap.add_argument("--game-port", type=int, default=GAME_PORT, help="сервер сайта игры")
+    ap.add_argument("--port", type=int, default=None,
+                    help="панель + трансляция (default 8090)")
+    ap.add_argument("--game-port", type=int, default=None, help="сервер сайта игры (default 8123)")
+    ap.add_argument("--raw-port", type=int, default=None,
+                    help="СЫРАЯ КАМЕРА DOOMa без UI (default 8125)")
     ap.add_argument("--wad", default="freedoom1")
     ap.add_argument("--level", default="E1M1")
     ap.add_argument("--show", action="store_true", help="браузер с окном (не headless)")
     ap.add_argument("--no-agent", action="store_true", help="не стартовать ИИшку сразу")
     args = ap.parse_args()
 
-    STREAM_PORT = args.port
-    GAME_PORT = args.game_port
+    # порты: CLI > сохранённый cfg.json > дефолты (8090 панель / 8123 игра / 8125 сырая камера)
+    saved_ports = STATE.cfg.get("ports", {})
+    STREAM_PORT = args.port or saved_ports.get("panel") or STREAM_PORT
+    GAME_PORT = args.game_port or saved_ports.get("game") or GAME_PORT
+    RAW_PORT = args.raw_port or saved_ports.get("raw") or RAW_PORT
+    STATE.cfg["ports"] = {"panel": STREAM_PORT, "game": GAME_PORT, "raw": RAW_PORT}
     STATE.cfg["siteUrl"] = "http://%s:%d/index.html" % (GAME_HOST, GAME_PORT)
     STATE.cfg["game"]["wadName"] = args.wad
     STATE.cfg["game"]["levelCode"] = args.level.upper()
@@ -1638,6 +1964,7 @@ def main():
     print("=" * 62)
     print("Панель + трансляция:  http://localhost:%d" % STREAM_PORT)
     print("Игровой сайт:         http://localhost:%d" % GAME_PORT)
+    print("Сырая камера DOOMa:   http://localhost:%d  (/raw.mjpg, /raw.jpg)" % RAW_PORT)
     print("=" * 62)
 
     # 1) панель/стрим на :8090
@@ -1652,6 +1979,9 @@ def main():
 
     # 2) игровой сервер
     STATE.game_server.start(GAME_PORT)
+
+    # 2b) отдельный сервер СЫРОЙ КАМЕРЫ игрока (картинка DOOMa без UI панели)
+    start_raw_server(RAW_PORT)
 
     # 3) ИИшка
     if not args.no_agent:

@@ -1,7 +1,2 @@
-/.idea
-/.claude
-/.report
-/.tmp.claude
-/.source
-/log
-__pycache__/
+*.log
+.ai_stream_state/
