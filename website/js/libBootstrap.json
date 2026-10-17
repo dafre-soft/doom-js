@@ -36,13 +36,16 @@
             "/assets/uzdoom/heretic/levelPatches.json",
             "/lib/libadlmidi/libadlmidi.dosbox.slim.processor.js",
             "/lib/libadlmidi/libadlmidi.dosbox.slim.core.wasm",
-            "/lib/zxing-wasm/zxing_full.wasm"
+            "/lib/zxing-wasm/zxing_full.wasm",
+            "/wads/doom1.wad",
+            "/wads/freedoom1.wad"
         ],
         "css": [
             "/css/webapp/appMenu.css",
             "/css/doomMenu.css"
         ],
         "js": [
+            "/js/boot/prelude.js",
             "/js/engine/entity/abstractLoadedEntity.js",
             "/js/engine/entity/instance.js",
             "/js/engine/entity/interaction.js",
@@ -343,8 +346,8 @@
             "/js/doom/doomHostedSession.js",
             "/js/doom/doomFollowedSession.js",
             "/js/doom/doomGame.js",
-            "/js/api/doomJsApi.js",
-            "/js/main.js"
+            "/js/main.js",
+            "/js/api/doomJsApi.js"
         ]
     }
 }

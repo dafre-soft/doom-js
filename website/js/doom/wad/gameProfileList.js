@@ -8,10 +8,34 @@
  *
  * Adding a game = one DefaultGameProfile subclass + one entry in _profiles.
  */
+// Singleton: every "new GameProfileList()" returns the same instance, and the
+// profile objects are created once, lazily, on that first construction — long
+// after all the profile classes have been evaluated. Constructing them at file
+// scope (or touching another class's `const` bindings during evaluation) used
+// to crash with "is not defined" / "can't access lexical declaration … before
+// initialization": the bootstrap loads the scripts in parallel batches, so any
+// file can be evaluated before its dependencies finished parsing.
+GameProfileList.__instance = null;
+GameProfileList.__cache    = null;
+
 class GameProfileList {
-    // The list is built lazily on first use: scripts load in parallel batches,
-    // so constructing it at file scope could touch a profile class still in
-    // the temporal dead zone ("can't access lexical declaration 'FreedoomGameProfile' before initialization").
+    constructor() {
+        if ((GameProfileList.__instance !== null) && (GameProfileList.__instance !== undefined)) {
+            return GameProfileList.__instance;
+        }
+        const byCode = GameProfileList._byCode();
+        this._profiles = [
+            byCode.heretic,
+            byCode.freedoom,
+            byCode.tnt,
+            byCode.plutonia,
+            byCode.doom
+        ];
+        this._fallback = new DefaultGameProfile();
+        GameProfileList.__instance = this;
+    }
+
+    // Built lazily on first use — see the note above the class.
     static _byCode() {
         if ((GameProfileList.__cache ?? null) === null) {
             GameProfileList.__cache = {
@@ -27,18 +51,6 @@ class GameProfileList {
         }
 
         return GameProfileList.__cache;
-    }
-
-    constructor() {
-        const byCode = GameProfileList._byCode();
-        this._profiles = [
-            byCode.heretic,
-            byCode.freedoom,
-            byCode.tnt,
-            byCode.plutonia,
-            byCode.doom
-        ];
-        this._fallback = new DefaultGameProfile();
     }
 
     /**
